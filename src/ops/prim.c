@@ -26,7 +26,7 @@ dL/dW: (k, m) = Xt @ G
 
 assume out is zerod
 */
-void matmul_forward(const double* A, const double* B, double* out, int n, int k, int m) {
+EXPORT void matmul_forward(const double* A, const double* B, double* out, int n, int k, int m) {
     // A @ B
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < m; j++) {
@@ -37,7 +37,7 @@ void matmul_forward(const double* A, const double* B, double* out, int n, int k,
     }
 }
 
-void matmul_backward(const double* A, const double* B, const double* grad_out, double* da, double* db, int n, int k, int m) {
+EXPORT void matmul_backward(const double* A, const double* B, const double* grad_out, double* da, double* db, int n, int k, int m) {
     // dl/da
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < k; j++) {
@@ -62,7 +62,7 @@ add with broadcast down cols, row is one sample in batch
 
 A: (n, m) B: (1, m)
 */
-void matadd_broadcast_forward(double* A, const double* B, int n, int m) {
+EXPORT void matadd_broadcast_forward(double* A, const double* B, int n, int m) {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < m; j++) {
             AT(A, i, j, m) += AT(B, 0, j, m);
@@ -73,7 +73,7 @@ void matadd_broadcast_forward(double* A, const double* B, int n, int m) {
 /*
 db: (1, m) cw sum should be 0 init
 */
-void matadd_broadcast_backward(const double* grad_out, double* dX, double* db, int n, int m) {
+EXPORT void matadd_broadcast_backward(const double* grad_out, double* dX, double* db, int n, int m) {
     // copy becayuse add is identity
     memcpy(dX, grad_out, sizeof(double) * n * m);
 
@@ -86,7 +86,7 @@ void matadd_broadcast_backward(const double* grad_out, double* dX, double* db, i
 
 // elementwise sub A - B
 
-void matsub_forward(const double* A, const double* B, double* out, int n, int m) {
+EXPORT void matsub_forward(const double* A, const double* B, double* out, int n, int m) {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < m; j++) {
             AT(out, i, j, m) = AT(A, i, j, m) - AT(B, i, j, m);
@@ -94,7 +94,7 @@ void matsub_forward(const double* A, const double* B, double* out, int n, int m)
     }
 }
 
-void matsub_backward(const double* grad_out, double* dA, double* dB, int n, int m) {
+EXPORT void matsub_backward(const double* grad_out, double* dA, double* dB, int n, int m) {
     memcpy(dA, grad_out, sizeof(double) * n * m);
 
     for (int i = 0; i < n; i++) {
@@ -110,7 +110,7 @@ elementwise multiply
 backward needs cached inputs from the forward
 */
 
-void hadamard_forward(const double* A, const double* B, double* out, int n, int m) {
+EXPORT void hadamard_forward(const double* A, const double* B, double* out, int n, int m) {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < m; j++) {
             AT(out, i, j, m) = AT(A, i, j, m) * AT(B, i, j, m);
@@ -118,7 +118,7 @@ void hadamard_forward(const double* A, const double* B, double* out, int n, int 
     }
 }
 
-void hadamard_backward(const double* grad_out, const double* A, const double* B, double* dA, double* dB, int n, int m) {
+EXPORT void hadamard_backward(const double* grad_out, const double* A, const double* B, double* dA, double* dB, int n, int m) {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < m; j++) {
             AT(dA, i, j, m) = AT(grad_out, i, j, m) * AT(B, i, j, m);
@@ -135,7 +135,7 @@ void hadamard_backward(const double* grad_out, const double* A, const double* B,
 
 // mean, n = total elements
 
-void matmean_forward(const double* A, double* out, int n) {
+EXPORT void matmean_forward(const double* A, double* out, int n) {
     double sum = 0;
     for (int i = 0; i < n; i++) {
         sum += A[i];
@@ -144,7 +144,7 @@ void matmean_forward(const double* A, double* out, int n) {
     *out = sum / n;
 }
 
-void matmean_backward(double* dx, int n, double grad_out) {
+EXPORT void matmean_backward(double* dx, int n, double grad_out) {
     for (int i = 0; i < n; i++) {
         dx[i] = grad_out / n;
     }
@@ -154,7 +154,7 @@ void matmean_backward(double* dx, int n, double grad_out) {
 tanh activation backward takes forward output buffer as a input
 */
 
-void tanh_forward(const double* Z, double* out, int n, int m) {
+EXPORT void tanh_forward(const double* Z, double* out, int n, int m) {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < m; j++) {
             AT(out, i, j, m) = tanh(AT(Z, i, j, m));
@@ -162,7 +162,7 @@ void tanh_forward(const double* Z, double* out, int n, int m) {
     }
 }
 
-void tanh_backward(const double* out, const double* grad_out, double* dz, int n, int m) {
+EXPORT void tanh_backward(const double* out, const double* grad_out, double* dz, int n, int m) {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < m; j++) {
             AT(dz, i, j, m) = AT(grad_out, i, j, m) * (1 - (AT(out, i, j, m) * AT(out, i, j, m)));

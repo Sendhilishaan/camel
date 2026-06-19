@@ -84,12 +84,74 @@ void matadd_broadcast_backward(const double* grad_out, double* dX, double* db, i
     }
 }
 
-// sub
+// elementwise sub A - B
 
-/*
-tanh activation
+void matsub_forward(const double* A, const double* B, double* out, int n, int m) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            AT(out, i, j, m) = AT(A, i, j, m) - AT(B, i, j, m);
+        }
+    }
+}
 
-backward takes forward output buffer as a input
+void matsub_backward(const double* grad_out, double* dA, double* dB, int n, int m) {
+    memcpy(dA, grad_out, sizeof(double) * n * m);
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            AT(dB, i, j, m) = -(AT(grad_out, i, j, m));
+        }
+    }
+}
+
+/* 
+elementwise multiply
+
+backward needs cached inputs from the forward
+*/
+
+void hadamard_forward(const double* A, const double* B, double* out, int n, int m) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            AT(out, i, j, m) = AT(A, i, j, m) * AT(B, i, j, m);
+        }
+    }
+}
+
+void hadamard_backward(const double* grad_out, const double* A, const double* B, double* dA, double* dB, int n, int m) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            AT(dA, i, j, m) = AT(grad_out, i, j, m) * AT(B, i, j, m);
+        }
+    }
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            AT(dB, i, j, m) = AT(grad_out, i, j, m) * AT(A, i, j, m);
+        }
+    }
+
+}
+
+// mean, n = total elements
+
+void matmean_forward(const double* A, double* out, int n) {
+    double sum = 0;
+    for (int i = 0; i < n; i++) {
+        sum += A[i];
+    }
+
+    *out = sum / n;
+}
+
+void matmean_backward(double* dx, int n, double grad_out) {
+    for (int i = 0; i < n; i++) {
+        dx[i] = grad_out / n;
+    }
+}
+
+/* 
+tanh activation backward takes forward output buffer as a input
 */
 
 void tanh_forward(const double* Z, double* out, int n, int m) {

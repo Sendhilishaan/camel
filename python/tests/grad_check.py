@@ -1,6 +1,5 @@
-from ._c import c
 import numpy as np
-from .ops import Ops
+from camel.ops import Ops
 
 
 def numerical_grad(f, x, eps=1e-5):
@@ -41,3 +40,6 @@ def check_matmul():
     assert np.allclose(dA, num_dA, rtol=1e-5, atol=1e-7)
     assert np.allclose(dB, num_dB, rtol=1e-5, atol=1e-7)
     print("matmul grad check PASSED")
+
+if __name__ == "__main__":
+    check_matmul()

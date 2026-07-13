@@ -164,6 +164,6 @@ class Ops:
 
         dZ_buf = Vbuf.zeros(n, m)
 
-        c._tanh_backward(out.ptr, grad_out.ptr, dZ_buf.ptr, n, m)
+        c.tanh_backward(out.ptr, grad_out.ptr, dZ_buf.ptr, n, m)
 
         return dZ_buf

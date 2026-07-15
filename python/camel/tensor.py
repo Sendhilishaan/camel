@@ -33,6 +33,8 @@ class Function:
 class MatMul(Function):
     @staticmethod
     def forward(ctx: Context, a: Vbuf, b: Vbuf):
+        if a.shape[1] != b.shape[0]:
+            raise ValueError(f"matmul shape mismatch: {a.shape} @ {b.shape}")
         ctx.save(a, b)
         return Ops.matmul_forward(a, b)
 
@@ -44,6 +46,8 @@ class MatMul(Function):
 class Add(Function):
     @staticmethod
     def forward(ctx: Context, a: Vbuf, b: Vbuf):
+        if b.shape[0] != 1 or b.shape[1] != a.shape[1]:
+            raise ValueError(f"add(bias) expects b=(1, {a.shape[1]}), got {b.shape} for a={a.shape}")
         return Ops.add_forward(a, b)
     
     @staticmethod
@@ -53,6 +57,8 @@ class Add(Function):
 class Sub(Function):
     @staticmethod
     def forward(ctx: Context, a: Vbuf, b: Vbuf):
+        if a.shape != b.shape:
+            raise ValueError(f"sub shape mismatch: {a.shape} - {b.shape}")
         return Ops.sub_forward(a, b)
     
     @staticmethod
@@ -62,6 +68,8 @@ class Sub(Function):
 class Hadamard(Function):
     @staticmethod
     def forward(ctx: Context, a: Vbuf, b: Vbuf):
+        if a.shape != b.shape:
+            raise ValueError(f"hadamard shape mismatch: {a.shape} * {b.shape}")
         ctx.save(a, b)
         return Ops.hadamard_forward(a, b)
     

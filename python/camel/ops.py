@@ -24,9 +24,6 @@ class Ops:
     # wrapping c functions
     @staticmethod
     def matmul_forward(A: Vbuf, B: Vbuf) -> Vbuf:
-        if A.shape[1] != B.shape[0]:
-            raise AttributeError # deal errors later
-
         result_buf = Vbuf.zeros(A.shape[0], B.shape[1])
 
         c.matmul_forward(A.ptr, B.ptr, result_buf.ptr, A.shape[0], A.shape[1], B.shape[1])
@@ -35,10 +32,6 @@ class Ops:
 
     @staticmethod
     def matmul_backward(A: Vbuf, B: Vbuf, grad_out: Vbuf) -> tuple[Vbuf, Vbuf]:
-
-        if A.shape[1] != B.shape[0]:
-            raise AttributeError
-
         dA_buf = Vbuf.zeros(A.shape[0], A.shape[1])
         dB_buf = Vbuf.zeros(A.shape[1], B.shape[1])
 
@@ -69,9 +62,6 @@ class Ops:
 
     @staticmethod
     def sub_forward(A: Vbuf, B: Vbuf) -> Vbuf:
-        if not Vbuf.shape_eq(A, B):
-            raise AttributeError
-        
         n = A.shape[0]
         m = B.shape[1]
         
@@ -95,9 +85,6 @@ class Ops:
 
     @staticmethod
     def hadamard_forward(A: Vbuf, B: Vbuf) -> Vbuf:
-        if not Vbuf.shape_eq(A, B):
-            raise AttributeError
-
         n = A.shape[0]
         m = B.shape[1]
 
@@ -109,9 +96,6 @@ class Ops:
     
     @staticmethod
     def hadamard_backward(A: Vbuf, B: Vbuf, grad_out: Vbuf) -> tuple[Vbuf, Vbuf]:
-        if not Vbuf.shape_eq(A, B):
-            raise AttributeError
-
         n = A.shape[0]
         m = B.shape[1]
 

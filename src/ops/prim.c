@@ -169,3 +169,19 @@ EXPORT void tanh_backward(const double* out, const double* grad_out, double* dz,
         }
     }
 }
+
+EXPORT void relu_forward(const double* Z, double* out, int n, int m) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            AT(out, i, j, m) = (AT(Z, i, j, m) > 0) ? (AT(Z, i, j, m)) : 0;
+        }
+    }
+}
+
+EXPORT void relu_backward(const double* out, const double* grad_out, double* dz, int n, int m) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            AT(dz, i, j, m) = (AT(out, i, j, m) > 0) ? AT(grad_out, i, j, m) : 0;
+        }
+    }
+}

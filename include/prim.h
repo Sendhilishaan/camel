@@ -33,4 +33,8 @@ EXPORT void tanh_forward(const double* Z, double* out, int n, int m);
 
 EXPORT void tanh_backward(const double* out, const double* grad_out, double* dz, int n, int m);
 
+EXPORT void relu_forward(const double* Z, double* out, int n, int m);
+
+EXPORT void relu_backward(const double* out, const double* grad_out, double* dz, int n, int m);
+
 #endif

@@ -141,7 +141,7 @@ class Ops:
     @staticmethod
     def tanh_backward(out: Vbuf, grad_out: Vbuf) -> Vbuf:
         if not Vbuf.shape_eq(out, grad_out):
-            raise AttributeError
+            raise ValueError(f"tanh_backward shape mismatch: out={out.shape}, grad_out={grad_out.shape}")
         
         n = out.shape[0]
         m = out.shape[1]
@@ -149,5 +149,29 @@ class Ops:
         dZ_buf = Vbuf.zeros(n, m)
 
         c.tanh_backward(out.ptr, grad_out.ptr, dZ_buf.ptr, n, m)
+
+        return dZ_buf
+
+    @staticmethod
+    def relu_forward(Z: Vbuf) -> Vbuf:
+        n = Z.shape[0]
+        m = Z.shape[1]
+        out = Vbuf.zeros(n, m)
+
+        c.relu_forward(Z.ptr, out.ptr, n, m)
+
+        return out
+    
+    @staticmethod
+    def relu_backward(out: Vbuf, grad_out: Vbuf) -> Vbuf:
+        if not Vbuf.shape_eq(out, grad_out):
+            raise ValueError(f"relu_backward shape mismatch: out={out.shape}, grad_out={grad_out.shape}")
+
+        n = out.shape[0]
+        m = out.shape[1]
+
+        dZ_buf = Vbuf.zeros(n, m)
+
+        c.relu_backward(out.ptr, grad_out.ptr, dZ_buf.ptr, n, m)
 
         return dZ_buf

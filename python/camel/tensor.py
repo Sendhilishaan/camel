@@ -101,11 +101,22 @@ class Tanh(Function):
         out, = ctx.saved
         return (Ops.tanh_backward(out, grad_out),)
 
+class ReLU(Function):
+    @staticmethod
+    def forward(ctx: Context, a: Vbuf):
+        out = Ops.relu_forward(a)
+        ctx.save(out)
+        return out
+
+    @staticmethod
+    def backward(ctx: Context, grad_out: Vbuf):
+        out, = ctx.saved
+        return (Ops.relu_backward(out, grad_out),)
 
 class Tensor:
     def __init__(self, buf: Vbuf, requires_grad=True, _prev=(), _op=""):
         self.buf = buf
-        self.grad = None
+        self.grad: Vbuf | None = None
         self.requires_grad = requires_grad
         self._backward = lambda: None
         self._prev = _prev
@@ -128,6 +139,9 @@ class Tensor:
 
     def mean(self) -> Tensor:
         return Mean.apply(self)
+    
+    def relu(self) -> Tensor:
+        return ReLU.apply(self)
 
     def _accum(self, delta: Vbuf) -> None:
         if not self.requires_grad:

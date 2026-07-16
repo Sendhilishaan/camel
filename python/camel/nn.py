@@ -2,7 +2,9 @@ import math
 import numpy as np
 
 from camel.ops import Vbuf
-from camel.tensor import Tensor
+from typing import List
+from camel.tensor import ReLU, Function, Tensor
+
 
 class Module:
     """
@@ -30,3 +32,32 @@ class Linear(Module):
 
     def __call__(self, X: Tensor) -> Tensor:
         return (X @ self.W) + self.b
+
+class MLP(Module):
+    def __init__(self, in_channels: int, hidden_channels: List[int], activations: None | List[type[Function]] = None):
+        if not hidden_channels:
+            raise ValueError("hidden_channels must have at least one entry (the output width)")
+        for w in [in_channels, *hidden_channels]:
+            if w <= 0:
+                raise ValueError(f"layer widths must be positive, got {w}")
+
+        self.in_channels = in_channels
+
+        self.hidden_channels = hidden_channels
+
+        if activations is None:
+            self.activations = [ReLU] * (len(hidden_channels) - 1)
+        elif len(hidden_channels) - 1 != len(activations):
+            raise ValueError(f"expected {len(hidden_channels) - 1} activations for {len(hidden_channels)} layers, got {len(activations)}")
+        else:
+            self.activations = activations
+        
+        shapes = [in_channels] + hidden_channels
+        self.layers = [Linear(a, b) for a, b in zip(shapes, shapes[1:])]
+    
+    def __call__(self, X: Tensor) -> Tensor:
+        X_curr = X
+        for act, layer in zip(self.activations, self.layers):
+            X_curr = act.apply(layer(X_curr))
+        
+        return self.layers[-1](X_curr)

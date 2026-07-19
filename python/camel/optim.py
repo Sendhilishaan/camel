@@ -26,3 +26,14 @@ class SGD(Optimiser):
             v *= self.momentum
             v += t.grad.data
             t.buf.data -= v * self.lr
+
+class AdaGrad(Optimiser):
+    def __init__(self, tensors: Iterable[Tensor], lr: float, ep=1e-8):
+        super().__init__(tensors, lr)
+        self.ep = ep
+        self.grad_sum = [np.zeros_like(t.buf.data) for t in self.tensors]
+    
+    def step(self):
+        for t, g in zip(self.tensors, self.grad_sum):
+            g += np.square(t.grad.data)
+            t.buf.data -= (self.lr * t.grad.data) / (np.sqrt(self.ep) + self.ep)

@@ -9,44 +9,69 @@ class Optimiser:
         self.tensors = list(tensors)
 
     def zero_grad(self):
-        for t in self.tensors:
-            t.grad = None
+        for p in self.tensors:
+            p.grad = None
 
     def step(self):
         raise NotImplementedError
-    
+
 class SGD(Optimiser):
     def __init__(self, tensors: Iterable[Tensor], lr: float, momentum=0.0):
         super().__init__(tensors, lr)
         self.momentum = momentum
-        self.velocity = [np.zeros_like(t.buf.data) for t in self.tensors]
-    
+        self.velocity = [np.zeros_like(p.buf.data) for p in self.tensors]
+
     def step(self):
-        for t, v in zip(self.tensors, self.velocity):
+        for p, v in zip(self.tensors, self.velocity):
             v *= self.momentum
-            v += t.grad.data
-            t.buf.data -= v * self.lr
+            v += p.grad.data
+            p.buf.data -= v * self.lr
 
 class AdaGrad(Optimiser):
-    def __init__(self, tensors: Iterable[Tensor], lr: float, ep=1e-8):
+    def __init__(self, tensors: Iterable[Tensor], lr: float, eps=1e-8):
         super().__init__(tensors, lr)
-        self.ep = ep
-        self.grad_sum = [np.zeros_like(t.buf.data) for t in self.tensors]
-    
+        self.eps = eps
+        self.grad_sum = [np.zeros_like(p.buf.data) for p in self.tensors]
+
     def step(self):
-        for t, g in zip(self.tensors, self.grad_sum):
-            g += np.square(t.grad.data)
-            t.buf.data -= (self.lr * t.grad.data) / (np.sqrt(g) + self.ep)
+        for p, G in zip(self.tensors, self.grad_sum):
+            G += np.square(p.grad.data) # sum of second moment
+            p.buf.data -= (self.lr * p.grad.data) / (np.sqrt(G) + self.eps)
 
 class RMSprop(Optimiser):
-    def __init__(self, tensors: Iterable[Tensor], lr: float, ep=1e-8, decay=0.9):
+    def __init__(self, tensors: Iterable[Tensor], lr: float, eps=1e-8, decay=0.9):
         super().__init__(tensors, lr)
-        self.ep = ep
+        self.eps = eps
         self.decay = decay
-        self.ema_sq = [np.zeros_like(t.buf.data) for t in self.tensors]
+        self.ema_sq = [np.zeros_like(p.buf.data) for p in self.tensors]
 
     def step(self):
-        for t, g in zip(self.tensors, self.ema_sq):
-            g *= self.decay
-            g += (1 - self.decay) * np.square(t.grad.data)
-            t.buf.data -= (self.lr * t.grad.data) / (np.sqrt(g) + self.ep)
+        for p, s in zip(self.tensors, self.ema_sq):
+            s *= self.decay
+            s += (1 - self.decay) * np.square(p.grad.data)
+            # (1 - b) normalisation, weights sum to 1 making it a true average
+            p.buf.data -= (self.lr * p.grad.data) / (np.sqrt(s) + self.eps)
+
+class Adam(Optimiser):
+    def __init__(self, tensors: Iterable[Tensor], lr: float, decay1=0.9, decay2=0.999, eps=1e-8):
+        super().__init__(tensors, lr)
+        self.decay1 = decay1 # decay for 1st moment (grad, dir)
+        self.decay2 = decay2 # decay for 2nd moment (grad^2, mag)
+        self.eps = eps
+        self.t = 0 # timestep
+
+        self.exp_avg = [np.zeros_like(p.buf.data) for p in self.tensors]
+        self.exp_avg_sq = [np.zeros_like(p.buf.data) for p in self.tensors]
+
+    def step(self):
+        self.t += 1
+        for p, m, v in zip(self.tensors, self.exp_avg, self.exp_avg_sq):
+            m *= self.decay1
+            m += (1 - self.decay1) * p.grad.data
+            m_hat = m / (1 - (self.decay1 ** self.t))
+
+            v *= self.decay2
+            v += (1 - self.decay2) * np.square(p.grad.data)
+            v_hat = v / (1 - (self.decay2 ** self.t))
+
+            p.buf.data -= (m_hat * self.lr) / (np.sqrt(v_hat) + self.eps)

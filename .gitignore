@@ -2,3 +2,6 @@ ROADMAP.md
 bin/
 .venv/
 camel.dll
+__pycache__/
+.vscode/
+*.egg-info/

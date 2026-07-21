@@ -2,7 +2,7 @@
 #include <string.h>
 #include <math.h>
 /*
-    forward and backward primitive kernels, naive implementations first
+    forward and backward primitive kernels
 
     primitives:
         - matmul
@@ -182,6 +182,51 @@ EXPORT void relu_backward(const double* out, const double* grad_out, double* dz,
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < m; j++) {
             AT(dz, i, j, m) = (AT(out, i, j, m) > 0) ? AT(grad_out, i, j, m) : 0;
+        }
+    }
+}
+
+/*
+    standard fused softmax + multi-class cross entropy to avoid underflowing log to 0
+*/
+
+EXPORT void softmax_xent_forward(const double* Z, const double* Y, double* probs, double* out_loss, int n, int m) {
+    double total_loss = 0;
+    for (int i = 0; i < n; i++) {
+        double curr_max = -INFINITY;
+        for (int j = 0; j < m; j++) {
+            if ((AT(Z, i, j, m)) > curr_max) {
+                curr_max = (AT(Z, i, j, m ));
+            }
+        }
+
+        double true_logit = 0;
+        // subtract by max (exp <= 0) exponentiate and accum sum
+        double sum = 0;
+        for (int j = 0; j < m; j++) {
+            (AT(probs, i, j, m)) = exp((AT(Z, i, j, m)) - curr_max);
+            sum += (AT(probs, i, j, m));
+
+            // true class logit using the one-hot mask; for cross entropy
+            true_logit += (AT(Z, i, j, m)) * (AT(Y, i, j, m));
+        }
+
+        // add loss for this row
+         total_loss += (-(true_logit - curr_max) + log(sum));
+
+        // normalise probs
+        for (int j = 0; j < m; j++) {
+            AT(probs, i, j, m) = (AT(probs, i, j, m)) / sum;
+        }
+    }
+
+    *out_loss = total_loss / n;
+}
+
+EXPORT void softmax_xent_backward(const double* probs, const double* Y, double* dZ, double grad_out, int n, int m) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            AT(dZ, i, j, m) = grad_out * (((AT(probs, i, j, m)) - (AT(Y, i, j, m))) / n);
         }
     }
 }

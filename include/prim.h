@@ -37,4 +37,8 @@ EXPORT void relu_forward(const double* Z, double* out, int n, int m);
 
 EXPORT void relu_backward(const double* out, const double* grad_out, double* dz, int n, int m);
 
+EXPORT void softmax_xent_forward(const double* Z, const double* Y, double* probs, double* out_loss, int n, int m);
+
+EXPORT void softmax_xent_backward(const double* probs, const double* Y, double* dZ, double grad_out, int n, int m);
+
 #endif

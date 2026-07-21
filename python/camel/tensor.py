@@ -113,6 +113,19 @@ class ReLU(Function):
         out, = ctx.saved
         return (Ops.relu_backward(out, grad_out),)
 
+class SoftmaxXent(Function):
+    @staticmethod
+    def forward(ctx: Context, Z: Vbuf, Y: Vbuf):
+        probs, loss = Ops.softmax_xent_forward(Z, Y)
+        ctx.save(probs, Y)
+        return loss
+
+    @staticmethod
+    def backward(ctx: Context, grad_out: Vbuf):
+        probs, Y = ctx.saved
+        # None since apply requires same #grads as inputs and Y is just data
+        return (Ops.softmax_xent_backward(probs, Y, grad_out), None)
+
 class Tensor:
     def __init__(self, buf: Vbuf, requires_grad=True, _prev=(), _op=""):
         self.buf = buf
@@ -142,9 +155,12 @@ class Tensor:
     
     def relu(self) -> Tensor:
         return ReLU.apply(self)
+    
+    def softmax_xent(self, Y: Tensor) -> Tensor:
+        return SoftmaxXent.apply(self, Y)
 
     def _accum(self, delta: Vbuf) -> None:
-        if not self.requires_grad:
+        if not self.requires_grad or delta is None:
             return
         elif self.grad is None:
             self.grad = Vbuf(delta.data.copy())

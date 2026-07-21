@@ -49,3 +49,10 @@ c.relu_forward.restype = None
 
 c.relu_backward.argtypes = [POINTER(c_double), POINTER(c_double), POINTER(c_double), c_int, c_int]
 c.relu_backward.restype = None
+
+c.softmax_xent_forward.argtypes = [POINTER(c_double), POINTER(c_double), POINTER(c_double), POINTER(c_double), c_int, c_int]
+c.softmax_xent_forward.restype = None
+
+# grad_out is a plain scalar double, like matmean_backward
+c.softmax_xent_backward.argtypes = [POINTER(c_double), POINTER(c_double), POINTER(c_double), c_double, c_int, c_int]
+c.softmax_xent_backward.restype = None

@@ -175,3 +175,30 @@ class Ops:
         c.relu_backward(out.ptr, grad_out.ptr, dZ_buf.ptr, n, m)
 
         return dZ_buf
+
+    @staticmethod # fused softmax + cross-entropy; returns (probs cached for backward, scalar loss)
+    def softmax_xent_forward(Z: Vbuf, Y: Vbuf) -> tuple[Vbuf, Vbuf]:
+        if not Vbuf.shape_eq(Z, Y):
+            raise ValueError(f"softmax_xent shape mismatch: Z={Z.shape}, Y={Y.shape}")
+
+        n = Z.shape[0]
+        m = Z.shape[1]
+
+        probs = Vbuf.zeros(n, m)
+        loss = Vbuf.zeros(1, 1) # scalar
+
+        c.softmax_xent_forward(Z.ptr, Y.ptr, probs.ptr, loss.ptr, n, m)
+
+        return (probs, loss)
+
+    @staticmethod # probs is the cached softmax from forward
+    def softmax_xent_backward(probs: Vbuf, Y: Vbuf, grad_out: Vbuf) -> Vbuf:
+        n = probs.shape[0]
+        m = probs.shape[1]
+
+        dZ_buf = Vbuf.zeros(n, m)
+        g = grad_out.data.item()
+
+        c.softmax_xent_backward(probs.ptr, Y.ptr, dZ_buf.ptr, g, n, m)
+
+        return dZ_buf

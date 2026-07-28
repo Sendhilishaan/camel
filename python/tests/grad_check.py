@@ -144,6 +144,41 @@ def check_tanh():
     assert np.allclose(dZ.data, num_dZ, rtol=1e-5, atol=1e-7)
 
 
+def check_softmax_xent():
+    n, m = 4, 3
+    np.random.seed(6)
+    Z = Vbuf(np.random.randn(n, m))
+
+    # one-hot targets: a random true class per row
+    labels = np.random.randint(0, m, size=n)
+    Y_data = np.zeros((n, m))
+    Y_data[np.arange(n), labels] = 1.0
+    Y = Vbuf(Y_data)
+
+    # the forward already outputs a (1,1) scalar loss, so it can be L directly
+    def L():
+        _, loss = Ops.softmax_xent_forward(Z, Y)
+        return loss.data.item()
+
+    # (1) forward value: independent numpy reference via log-sum-exp.
+    # a consistent sign/shift bug in fwd+bwd would still pass the grad check,
+    # so pin the loss value on its own.
+    z = Z.data - Z.data.max(axis=1, keepdims=True)
+    log_probs = z - np.log(np.exp(z).sum(axis=1, keepdims=True))
+    ref_loss = float((-(Y_data * log_probs).sum(axis=1)).mean())
+    probs, loss = Ops.softmax_xent_forward(Z, Y)
+    print("SOFTMAX_XENT loss err:", abs(loss.data.item() - ref_loss))
+    assert np.isclose(loss.data.item(), ref_loss, rtol=1e-9, atol=1e-11)
+
+    # (2) backward vs central differences. upstream grad = 1 (loss is the root).
+    G = Vbuf(np.ones((1, 1)))
+    dZ = Ops.softmax_xent_backward(probs, Y, G)
+    num_dZ = numerical_grad(L, Z)
+
+    print("SOFTMAX_XENT dZ max err:", np.max(np.abs(dZ.data - num_dZ)))
+    assert np.allclose(dZ.data, num_dZ, rtol=1e-5, atol=1e-7)
+
+
 if __name__ == "__main__":
     check_matmul()
     check_add()
@@ -151,3 +186,4 @@ if __name__ == "__main__":
     check_hadamard()
     check_mean()
     check_tanh()
+    check_softmax_xent()

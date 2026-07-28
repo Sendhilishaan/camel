@@ -81,8 +81,38 @@ def check_mlp():
     assert np.allclose(b.grad.data, num_db, rtol=1e-5, atol=1e-7)
 
 
+def check_softmax_xent():
+    """full classification graph: logits = X@W + b ; loss = softmax_xent(logits, Y).
+    closes the loop kernel -> Ops -> Function -> loss.backward() through the
+    (dZ, None) grad path (Y is a non-differentiable target)."""
+    np.random.seed(11)
+    n, k, C = 5, 4, 3
+    X = Tensor(Vbuf(np.random.randn(n, k)), requires_grad=False)
+    W = Tensor(Vbuf(np.random.randn(k, C)))
+    b = Tensor(Vbuf(np.random.randn(1, C)))
+
+    labels = np.random.randint(0, C, size=n)
+    Y_data = np.zeros((n, C))
+    Y_data[np.arange(n), labels] = 1.0
+    Y = Tensor(Vbuf(Y_data), requires_grad=False)  # target: no grad
+
+    def L():
+        return (X @ W + b).softmax_xent(Y).buf.data.item()
+
+    (X @ W + b).softmax_xent(Y).backward()
+
+    num_dW = numerical_grad(L, W.buf)
+    num_db = numerical_grad(L, b.buf)
+
+    print("XENT dW max err:", np.max(np.abs(W.grad.data - num_dW)))
+    print("XENT db max err:", np.max(np.abs(b.grad.data - num_db)))
+    assert np.allclose(W.grad.data, num_dW, rtol=1e-5, atol=1e-7)
+    assert np.allclose(b.grad.data, num_db, rtol=1e-5, atol=1e-7)
+
+
 if __name__ == "__main__":
     check_matmul_scalar()
     check_matmul_chain()
     check_mlp()
+    check_softmax_xent()
     print("all tensor grad checks passed")

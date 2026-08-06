@@ -141,6 +141,25 @@ def check_tanh():
     assert ca.allclose(dZ.data, num_dZ, rtol=1e-5, atol=1e-7)
 
 
+def check_relu():
+    n, m = 4, 5
+    ca.random.seed(12)
+    Z = Vbuf(ca.random.randn(n, m))
+    G = Vbuf(ca.random.randn(n, m))
+
+    def L():
+        out = Ops.relu_forward(Z)
+        return ca.sum(G.data * out.data)
+
+    out = Ops.relu_forward(Z)
+    dZ = Ops.relu_backward(out, G)
+
+    num_dZ = numerical_grad(L, Z)
+
+    print("RELU dZ max err:", ca.max(ca.abs(dZ.data - num_dZ)))
+    assert ca.allclose(dZ.data, num_dZ, rtol=1e-5, atol=1e-7)
+
+
 def check_softmax_xent():
     n, m = 4, 3
     ca.random.seed(6)
@@ -183,4 +202,5 @@ if __name__ == "__main__":
     check_hadamard()
     check_mean()
     check_tanh()
+    check_relu()
     check_softmax_xent()

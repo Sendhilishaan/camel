@@ -1,14 +1,15 @@
-import numpy as np
+import math
 
+from camel import array as ca
 from camel.ops import Vbuf
 from camel.tensor import Tensor
 from camel.nn import MLP
 from camel.optim import SGD
 
 # example training loop: fit sin with a small MLP, full-batch SGD with momentum
-X = np.linspace(-2*np.pi, 2*np.pi, 1000).reshape(-1, 1)
+X = ca.linspace(-2*math.pi, 2*math.pi, 1000).reshape(-1, 1)
 X = X / X.std()
-y = np.sin(X)
+y = ca.sin(X)
 
 X_t = Tensor(Vbuf(X), requires_grad=False)
 y_true = Tensor(Vbuf(y), requires_grad=False)

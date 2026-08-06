@@ -1,7 +1,7 @@
 from __future__ import annotations
 from camel.ops import Vbuf, Ops
+from camel.array import CamelArray
 from typing import List
-import numpy as np
 
 class Context:
     def __init__(self): self.saved = ()
@@ -184,7 +184,7 @@ class Tensor:
         
         build(self)
 
-        self.grad = Vbuf(np.ones((1, 1)))
+        self.grad = Vbuf(CamelArray.ones((1, 1)))
 
         for t in reversed(topo):
             t._backward()

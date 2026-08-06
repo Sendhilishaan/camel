@@ -7,7 +7,7 @@ name = "camel"
 version = "0.1.0"
 description = "from-scratch autograd deep learning library: C kernels + Python autograd/nn/optim"
 requires-python = ">=3.10"
-dependencies = ["numpy"]
+dependencies = []
 
 [tool.setuptools]
 package-dir = {"" = "python"}

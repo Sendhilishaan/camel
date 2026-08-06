@@ -1,6 +1,6 @@
 import math
-import numpy as np
 
+from camel import array as ca
 from camel.ops import Vbuf
 from typing import List
 from camel.tensor import ReLU, Function, Tensor
@@ -28,7 +28,7 @@ class Linear(Module):
         self.W = Tensor(Vbuf.zeros(in_features, out_features))
         self.b = Tensor(Vbuf.zeros(1, out_features))
 
-        self.W.buf.data[:] = np.random.randn(in_features, out_features) * math.sqrt(2 / in_features) # He initialisation assuming ReLU, determing how to match with activation later
+        self.W.buf.data[:] = ca.random.randn(in_features, out_features) * math.sqrt(2 / in_features) # He initialisation assuming ReLU, determing how to match with activation later
 
     def __call__(self, X: Tensor) -> Tensor:
         return (X @ self.W) + self.b

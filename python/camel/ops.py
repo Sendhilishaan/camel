@@ -1,24 +1,24 @@
 from __future__ import annotations
 from ._c import c
-from ctypes import POINTER, c_double
-import numpy as np
+from camel.array import CamelArray
 from typing import Tuple
 
 class Vbuf:
-    def __init__(self, data: np.ndarray):
-        self.data = np.ascontiguousarray(data, np.float64)
-        self.ptr = self.data.ctypes.data_as(POINTER(c_double))
+    def __init__(self, data: CamelArray):
+        # CamelArray is always float64 and contiguous, so no coercion needed here
+        self.data = data
+        self.ptr = self.data.ptr
         self.shape = self.data.shape
-    
+
     @staticmethod # factory
     def zeros(n: int, m: int) -> Vbuf:
-        return Vbuf(np.zeros(shape=(n, m)))
-    
+        return Vbuf(CamelArray.zeros((n, m)))
+
     @staticmethod
     def shape_eq(A: Vbuf, B: Vbuf) -> bool:
         return A.shape[0] == B.shape[0] and A.shape[1] == B.shape[1]
 
-        
+
 
 class Ops:
     # wrapping c functions
@@ -47,7 +47,7 @@ class Ops:
         c.matadd_broadcast_forward(out.ptr, B.ptr, out.shape[0], out.shape[1])
 
         return out
-    
+
     @staticmethod
     def add_backward(grad_out: Vbuf) -> tuple[Vbuf, Vbuf]:
         n = grad_out.shape[0]
@@ -64,11 +64,11 @@ class Ops:
     def sub_forward(A: Vbuf, B: Vbuf) -> Vbuf:
         n = A.shape[0]
         m = B.shape[1]
-        
+
         out = Vbuf.zeros(n, m)
 
         c.matsub_forward(A.ptr, B.ptr, out.ptr, n, m)
-        
+
         return out
 
     @staticmethod
@@ -93,7 +93,7 @@ class Ops:
         c.hadamard_forward(A.ptr, B.ptr, out.ptr, n, m)
 
         return out
-    
+
     @staticmethod
     def hadamard_backward(A: Vbuf, B: Vbuf, grad_out: Vbuf) -> tuple[Vbuf, Vbuf]:
         n = A.shape[0]
@@ -105,7 +105,7 @@ class Ops:
         c.hadamard_backward(grad_out.ptr, A.ptr, B.ptr, dA_buf.ptr, dB_buf.ptr, n, m)
 
         return (dA_buf, dB_buf)
-    
+
     @staticmethod
     def mean_forward(A: Vbuf) -> Vbuf:
         n = A.shape[0]
@@ -116,7 +116,7 @@ class Ops:
         c.matmean_forward(A.ptr, out.ptr, n * m)
 
         return out
-    
+
     @staticmethod # A is input buf
     def mean_backward(A: Vbuf, grad_out: Vbuf) -> Vbuf:
         n_total = A.shape[0] * A.shape[1]
@@ -137,12 +137,12 @@ class Ops:
         c.tanh_forward(Z.ptr, out.ptr, n, m)
 
         return out
-    
+
     @staticmethod
     def tanh_backward(out: Vbuf, grad_out: Vbuf) -> Vbuf:
         if not Vbuf.shape_eq(out, grad_out):
             raise ValueError(f"tanh_backward shape mismatch: out={out.shape}, grad_out={grad_out.shape}")
-        
+
         n = out.shape[0]
         m = out.shape[1]
 
@@ -161,7 +161,7 @@ class Ops:
         c.relu_forward(Z.ptr, out.ptr, n, m)
 
         return out
-    
+
     @staticmethod
     def relu_backward(out: Vbuf, grad_out: Vbuf) -> Vbuf:
         if not Vbuf.shape_eq(out, grad_out):

@@ -5,20 +5,11 @@ import random as _random
 from ctypes import c_double, cast, POINTER
 
 """
-camelArray: a from-scratch, numpy-free ndarray clone.
-
-The only thing this library ever needed from numpy was a contiguous, fixed-dtype
-buffer it could hand a raw double* to across the ctypes boundary (ascontiguousarray).
-CamelArray IS that buffer: a flat ctypes (c_double * n) array plus a shape tuple,
-with row-major (C-order) indexing on top.
-
-Scope is deliberately narrow: only what the rest of the repo actually calls
-(elementwise arithmetic + broadcasting, axis reductions, a handful of ufuncs,
-and the few indexing shapes used for one-hot targets / numeric grad checks) -
-not a general-purpose ndarray.
+CamelArray: a numpy-free ndarray clone - a flat ctypes double buffer plus a
+shape tuple, giving the C boundary a contiguous double* without numpy.
 """
 
-# captured before the ufuncs below shadow the builtins of the same name at module scope
+# saved before the ufuncs below shadow the builtin of the same name
 _builtin_abs = abs
 
 Shape = tuple
@@ -32,7 +23,7 @@ def _prod(shape: Shape) -> int:
 
 
 def _row_major_strides(shape: Shape) -> Shape:
-    # stride[i] = how many flat elements to skip to advance index i by one
+    # stride[i]: flat elements to skip to advance index i by one
     strides = [1] * len(shape)
     for i in range(len(shape) - 2, -1, -1):
         strides[i] = strides[i + 1] * shape[i + 1]
@@ -74,8 +65,7 @@ class CamelArray:
     __slots__ = ("_buf", "shape", "_strides")
 
     def __init__(self, data=None, _shape: Shape | None = None, _buf=None):
-        # internal fast path: wrap an existing flat ctypes buffer under a new shape,
-        # used by factories/reshape so they don't have to re-flatten anything
+        # fast path: wrap an existing buffer under a new shape (used by factories/reshape)
         if _buf is not None:
             self._buf = _buf
             self.shape = _shape
@@ -148,15 +138,12 @@ class CamelArray:
     def __repr__(self) -> str:
         return f"CamelArray(shape={self.shape}, data={list(self._buf)})"
 
-    # -- indexing -------------------------------------------------------------
-    # only the shapes this repo actually needs: a full multi-index (get/set one
-    # scalar), a bare `[:]` (overwrite the whole buffer in place), and the 2-array
-    # "fancy" index used to stamp one-hot rows (`Y[rows, cols] = 1.0`).
+    # -- indexing: scalar get/set, bare `[:]` overwrite, and fancy one-hot indexing --
 
     def _flat_index(self, idx: tuple) -> int:
         if len(idx) != len(self.shape):
             raise IndexError(f"expected a {len(self.shape)}-d index, got {idx!r}")
-        # not `sum(...)`: that name is shadowed by the module-level ufunc below
+        # not `sum()` - that name is shadowed by the ufunc below
         flat = 0
         for i, s in zip(idx, self._strides):
             flat += i * s
@@ -202,7 +189,7 @@ class CamelArray:
     def __sub__(self, other): return _broadcast_op(self, other, lambda x, y: x - y)
     def __rsub__(self, other): return _map(self, lambda x: other - x)
     def __mul__(self, other): return _broadcast_op(self, other, lambda x, y: x * y)
-    __rmul__ = __mul__  # multiplication is commutative, scalar case is symmetric in _broadcast_op
+    __rmul__ = __mul__  # multiplication is commutative
     def __truediv__(self, other): return _broadcast_op(self, other, lambda x, y: x / y)
     def __rtruediv__(self, other): return _map(self, lambda x: other / x)
     def __neg__(self): return _map(self, lambda x: -x)
@@ -214,8 +201,7 @@ class CamelArray:
     def __itruediv__(self, other): self._inplace(other, lambda x, y: x / y); return self
 
     def _inplace(self, other, op) -> None:
-        # true in-place mutation (no reallocation) so pointers cached elsewhere
-        # (e.g. Vbuf.ptr) stay valid across += / -= / *= / /=
+        # mutates in place (no realloc) so cached pointers like Vbuf.ptr stay valid
         if isinstance(other, (int, float)):
             for i in range(len(self._buf)):
                 self._buf[i] = op(self._buf[i], other)
@@ -293,8 +279,7 @@ def _broadcast_shape(shape_a: Shape, shape_b: Shape) -> Shape:
 
 
 def _broadcast_index(idx: tuple, shape: Shape) -> tuple:
-    # align `shape` to the right against the full-rank output index; size-1
-    # (or absent, higher-rank) dims collapse to index 0, per numpy's rule
+    # right-aligns shape to the output index; size-1 dims collapse to index 0
     offset = len(idx) - len(shape)
     return tuple(0 if s == 1 else i for i, s in zip(idx[offset:], shape))
 
@@ -368,8 +353,7 @@ class _Random:
         return CamelArray(_buf=(c_double * n)(*flat), _shape=tuple(shape))
 
     def randint(self, low: int, high: int, size: int) -> list:
-        # returned as a plain list: every call site uses this purely as an index
-        # sequence (one-hot row/col targets), never for arithmetic
+        # plain list: only ever used as an index sequence (one-hot targets), never arithmetic
         return [self._rng.randrange(low, high) for _ in range(size)]
 
 

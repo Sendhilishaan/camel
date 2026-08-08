@@ -4,7 +4,7 @@ from camel.tensor import Tensor
 from tests.grad_check import numerical_grad
 
 
-def check_matmul_scalar():
+def check_matmul_scalar(rtol=1e-5, atol=1e-7, eps=1e-5):
     """single matmul that already outputs a (1,1) scalar, so it can be the loss."""
     ca.random.seed(0)
     k = 4
@@ -17,16 +17,16 @@ def check_matmul_scalar():
     # analytic grads via the engine
     (A @ B).backward()
 
-    num_dA = numerical_grad(L, A.buf)
-    num_dB = numerical_grad(L, B.buf)
+    num_dA = numerical_grad(L, A.buf, eps)
+    num_dB = numerical_grad(L, B.buf, eps)
 
     print("TENSOR matmul dA max err:", ca.max(ca.abs(A.grad.data - num_dA)))
     print("TENSOR matmul dB max err:", ca.max(ca.abs(B.grad.data - num_dB)))
-    assert ca.allclose(A.grad.data, num_dA, rtol=1e-5, atol=1e-7)
-    assert ca.allclose(B.grad.data, num_dB, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(A.grad.data, num_dA, rtol=rtol, atol=atol)
+    assert ca.allclose(B.grad.data, num_dB, rtol=rtol, atol=atol)
 
 
-def check_matmul_chain():
+def check_matmul_chain(rtol=1e-5, atol=1e-7, eps=1e-5):
     """two chained matmuls -> (1,1). Proves reverse-topo ordering + chaining."""
     ca.random.seed(1)
     k, h = 4, 3
@@ -39,19 +39,19 @@ def check_matmul_chain():
 
     (X @ W1 @ W2).backward()
 
-    num_dX = numerical_grad(L, X.buf)
-    num_dW1 = numerical_grad(L, W1.buf)
-    num_dW2 = numerical_grad(L, W2.buf)
+    num_dX = numerical_grad(L, X.buf, eps)
+    num_dW1 = numerical_grad(L, W1.buf, eps)
+    num_dW2 = numerical_grad(L, W2.buf, eps)
 
     print("TENSOR chain dX  max err:", ca.max(ca.abs(X.grad.data - num_dX)))
     print("TENSOR chain dW1 max err:", ca.max(ca.abs(W1.grad.data - num_dW1)))
     print("TENSOR chain dW2 max err:", ca.max(ca.abs(W2.grad.data - num_dW2)))
-    assert ca.allclose(X.grad.data, num_dX, rtol=1e-5, atol=1e-7)
-    assert ca.allclose(W1.grad.data, num_dW1, rtol=1e-5, atol=1e-7)
-    assert ca.allclose(W2.grad.data, num_dW2, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(X.grad.data, num_dX, rtol=rtol, atol=atol)
+    assert ca.allclose(W1.grad.data, num_dW1, rtol=rtol, atol=atol)
+    assert ca.allclose(W2.grad.data, num_dW2, rtol=rtol, atol=atol)
 
 
-def check_mlp():
+def check_mlp(rtol=1e-5, atol=1e-7, eps=1e-5):
     """full graph: loss = mean((tanh(X@W + b) - Y)^2)
     exercises matmul, add(bias), tanh, sub, mul(hadamard), mean and the
     += accumulation path, since D feeds `D * D` twice."""
@@ -72,16 +72,16 @@ def check_mlp():
     D = H - Y
     (D * D).mean().backward()
 
-    num_dW = numerical_grad(L, W.buf)
-    num_db = numerical_grad(L, b.buf)
+    num_dW = numerical_grad(L, W.buf, eps)
+    num_db = numerical_grad(L, b.buf, eps)
 
     print("MLP dW max err:", ca.max(ca.abs(W.grad.data - num_dW)))
     print("MLP db max err:", ca.max(ca.abs(b.grad.data - num_db)))
-    assert ca.allclose(W.grad.data, num_dW, rtol=1e-5, atol=1e-7)
-    assert ca.allclose(b.grad.data, num_db, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(W.grad.data, num_dW, rtol=rtol, atol=atol)
+    assert ca.allclose(b.grad.data, num_db, rtol=rtol, atol=atol)
 
 
-def check_softmax_xent():
+def check_softmax_xent(rtol=1e-5, atol=1e-7, eps=1e-5):
     """full classification graph: logits = X@W + b ; loss = softmax_xent(logits, Y).
     closes the loop kernel -> Ops -> Function -> loss.backward() through the
     (dZ, None) grad path (Y is a non-differentiable target)."""
@@ -101,13 +101,13 @@ def check_softmax_xent():
 
     (X @ W + b).softmax_xent(Y).backward()
 
-    num_dW = numerical_grad(L, W.buf)
-    num_db = numerical_grad(L, b.buf)
+    num_dW = numerical_grad(L, W.buf, eps)
+    num_db = numerical_grad(L, b.buf, eps)
 
     print("XENT dW max err:", ca.max(ca.abs(W.grad.data - num_dW)))
     print("XENT db max err:", ca.max(ca.abs(b.grad.data - num_db)))
-    assert ca.allclose(W.grad.data, num_dW, rtol=1e-5, atol=1e-7)
-    assert ca.allclose(b.grad.data, num_db, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(W.grad.data, num_dW, rtol=rtol, atol=atol)
+    assert ca.allclose(b.grad.data, num_db, rtol=rtol, atol=atol)
 
 
 if __name__ == "__main__":

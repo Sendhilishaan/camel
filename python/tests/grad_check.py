@@ -20,7 +20,7 @@ def numerical_grad(f, vbuf: Vbuf, eps=1e-5):
     return grad
 
 
-def check_matmul():
+def check_matmul(rtol=1e-5, atol=1e-7, eps=1e-5):
     n, k, m = 4, 3, 5
     ca.random.seed(0)
     A = Vbuf(ca.random.randn(n, k))
@@ -32,16 +32,16 @@ def check_matmul():
         return ca.sum(G.data * out.data)
 
     dA, dB = Ops.matmul_backward(A, B, G)
-    num_dA = numerical_grad(L, A)
-    num_dB = numerical_grad(L, B)
+    num_dA = numerical_grad(L, A, eps)
+    num_dB = numerical_grad(L, B, eps)
 
     print("MATMUL dA max err:", ca.max(ca.abs(dA.data - num_dA)))
     print("MATMUL dB max err:", ca.max(ca.abs(dB.data - num_dB)))
-    assert ca.allclose(dA.data, num_dA, rtol=1e-5, atol=1e-7)
-    assert ca.allclose(dB.data, num_dB, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(dA.data, num_dA, rtol=rtol, atol=atol)
+    assert ca.allclose(dB.data, num_dB, rtol=rtol, atol=atol)
 
 
-def check_add():
+def check_add(rtol=1e-5, atol=1e-7, eps=1e-5):
     n, m = 4, 5
     ca.random.seed(1)
     A = Vbuf(ca.random.randn(n, m))
@@ -53,16 +53,16 @@ def check_add():
         return ca.sum(G.data * out.data)
 
     dA, dB = Ops.add_backward(G)
-    num_dA = numerical_grad(L, A)
-    num_dB = numerical_grad(L, B)
+    num_dA = numerical_grad(L, A, eps)
+    num_dB = numerical_grad(L, B, eps)
 
     print("ADD dA max err:", ca.max(ca.abs(dA.data - num_dA)))
     print("ADD dB max err:", ca.max(ca.abs(dB.data - num_dB)))
-    assert ca.allclose(dA.data, num_dA, rtol=1e-5, atol=1e-7)
-    assert ca.allclose(dB.data, num_dB, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(dA.data, num_dA, rtol=rtol, atol=atol)
+    assert ca.allclose(dB.data, num_dB, rtol=rtol, atol=atol)
 
 
-def check_sub():
+def check_sub(rtol=1e-5, atol=1e-7, eps=1e-5):
     n, m = 4, 5
     ca.random.seed(2)
     A = Vbuf(ca.random.randn(n, m))
@@ -74,16 +74,16 @@ def check_sub():
         return ca.sum(G.data * out.data)
 
     dA, dB = Ops.sub_backward(G)
-    num_dA = numerical_grad(L, A)
-    num_dB = numerical_grad(L, B)
+    num_dA = numerical_grad(L, A, eps)
+    num_dB = numerical_grad(L, B, eps)
 
     print("SUB dA max err:", ca.max(ca.abs(dA.data - num_dA)))
     print("SUB dB max err:", ca.max(ca.abs(dB.data - num_dB)))
-    assert ca.allclose(dA.data, num_dA, rtol=1e-5, atol=1e-7)
-    assert ca.allclose(dB.data, num_dB, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(dA.data, num_dA, rtol=rtol, atol=atol)
+    assert ca.allclose(dB.data, num_dB, rtol=rtol, atol=atol)
 
 
-def check_hadamard():
+def check_hadamard(rtol=1e-5, atol=1e-7, eps=1e-5):
     n, m = 4, 5
     ca.random.seed(3)
     A = Vbuf(ca.random.randn(n, m))
@@ -95,16 +95,16 @@ def check_hadamard():
         return ca.sum(G.data * out.data)
 
     dA, dB = Ops.hadamard_backward(A, B, G)
-    num_dA = numerical_grad(L, A)
-    num_dB = numerical_grad(L, B)
+    num_dA = numerical_grad(L, A, eps)
+    num_dB = numerical_grad(L, B, eps)
 
     print("HADAMARD dA max err:", ca.max(ca.abs(dA.data - num_dA)))
     print("HADAMARD dB max err:", ca.max(ca.abs(dB.data - num_dB)))
-    assert ca.allclose(dA.data, num_dA, rtol=1e-5, atol=1e-7)
-    assert ca.allclose(dB.data, num_dB, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(dA.data, num_dA, rtol=rtol, atol=atol)
+    assert ca.allclose(dB.data, num_dB, rtol=rtol, atol=atol)
 
 
-def check_mean():
+def check_mean(rtol=1e-5, atol=1e-7, eps=1e-5):
     n, m = 4, 5
     ca.random.seed(4)
     A = Vbuf(ca.random.randn(n, m))
@@ -116,13 +116,13 @@ def check_mean():
         return ca.sum(G.data * out.data)
 
     dA = Ops.mean_backward(A, G)
-    num_dA = numerical_grad(L, A)
+    num_dA = numerical_grad(L, A, eps)
 
     print("MEAN dA max err:", ca.max(ca.abs(dA.data - num_dA)))
-    assert ca.allclose(dA.data, num_dA, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(dA.data, num_dA, rtol=rtol, atol=atol)
 
 
-def check_tanh():
+def check_tanh(rtol=1e-5, atol=1e-7, eps=1e-5):
     n, m = 4, 5
     ca.random.seed(5)
     Z = Vbuf(ca.random.randn(n, m))
@@ -135,13 +135,13 @@ def check_tanh():
     out = Ops.tanh_forward(Z)
     dZ = Ops.tanh_backward(out, G)
 
-    num_dZ = numerical_grad(L, Z)
+    num_dZ = numerical_grad(L, Z, eps)
 
     print("TANH dZ max err:", ca.max(ca.abs(dZ.data - num_dZ)))
-    assert ca.allclose(dZ.data, num_dZ, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(dZ.data, num_dZ, rtol=rtol, atol=atol)
 
 
-def check_relu():
+def check_relu(rtol=1e-5, atol=1e-7, eps=1e-5):
     n, m = 4, 5
     ca.random.seed(12)
     Z = Vbuf(ca.random.randn(n, m))
@@ -154,13 +154,13 @@ def check_relu():
     out = Ops.relu_forward(Z)
     dZ = Ops.relu_backward(out, G)
 
-    num_dZ = numerical_grad(L, Z)
+    num_dZ = numerical_grad(L, Z, eps)
 
     print("RELU dZ max err:", ca.max(ca.abs(dZ.data - num_dZ)))
-    assert ca.allclose(dZ.data, num_dZ, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(dZ.data, num_dZ, rtol=rtol, atol=atol)
 
 
-def check_softmax_xent():
+def check_softmax_xent(rtol=1e-5, atol=1e-7, eps=1e-5, loss_rtol=1e-9, loss_atol=1e-11):
     n, m = 4, 3
     ca.random.seed(6)
     Z = Vbuf(ca.random.randn(n, m))
@@ -184,15 +184,15 @@ def check_softmax_xent():
     ref_loss = (-(Y_data * log_probs).sum(axis=1)).mean()
     probs, loss = Ops.softmax_xent_forward(Z, Y)
     print("SOFTMAX_XENT loss err:", abs(loss.data.item() - ref_loss))
-    assert ca.isclose(loss.data.item(), ref_loss, rtol=1e-9, atol=1e-11)
+    assert ca.isclose(loss.data.item(), ref_loss, rtol=loss_rtol, atol=loss_atol)
 
     # (2) backward vs central differences. upstream grad = 1 (loss is the root).
     G = Vbuf(ca.ones((1, 1)))
     dZ = Ops.softmax_xent_backward(probs, Y, G)
-    num_dZ = numerical_grad(L, Z)
+    num_dZ = numerical_grad(L, Z, eps)
 
     print("SOFTMAX_XENT dZ max err:", ca.max(ca.abs(dZ.data - num_dZ)))
-    assert ca.allclose(dZ.data, num_dZ, rtol=1e-5, atol=1e-7)
+    assert ca.allclose(dZ.data, num_dZ, rtol=rtol, atol=atol)
 
 
 if __name__ == "__main__":

@@ -85,8 +85,6 @@ class CamelArray:
         self._strides = _row_major_strides(shape)
         self._buf = (c_double * len(flat))(*flat)
 
-    # -- factories --------------------------------------------------------
-
     @staticmethod
     def zeros(shape: Shape) -> CamelArray:
         n = _prod(shape)
@@ -100,8 +98,6 @@ class CamelArray:
     @staticmethod
     def zeros_like(a: CamelArray) -> CamelArray:
         return CamelArray.zeros(a.shape)
-
-    # -- ctypes interop -----------------------------------------------------
 
     @property
     def ptr(self) -> POINTER(c_double):
@@ -141,8 +137,7 @@ class CamelArray:
     def __repr__(self) -> str:
         return f"CamelArray(shape={self.shape}, data={list(self._buf)})"
 
-    # -- indexing: scalar get/set, bare `[:]` overwrite, and fancy one-hot indexing --
-
+    # supports scalar get/set, bare `[:]` overwrite, and fancy one-hot indexing
     def _flat_index(self, idx: tuple) -> int:
         if len(idx) != len(self.shape):
             raise IndexError(f"expected a {len(self.shape)}-d index, got {idx!r}")
@@ -185,8 +180,6 @@ class CamelArray:
 
         raise TypeError(f"unsupported CamelArray index: {key!r}")
 
-    # -- elementwise arithmetic (broadcasting) -------------------------------
-
     def __add__(self, other): return _broadcast_op(self, other, lambda x, y: x + y)
     def __radd__(self, other): return _map(self, lambda x: other + x)
     def __sub__(self, other): return _broadcast_op(self, other, lambda x, y: x - y)
@@ -216,8 +209,6 @@ class CamelArray:
                 self._buf[i] = op(self._buf[i], other._buf[i])
             return
         raise TypeError(f"unsupported operand for in-place op: {type(other).__name__}")
-
-    # -- reductions -----------------------------------------------------------
 
     def sum(self, axis: int | None = None, keepdims: bool = False):
         return self._reduce(axis, keepdims, lambda a, b: a + b)
@@ -309,8 +300,7 @@ def _map(a: CamelArray, fn) -> CamelArray:
     return out
 
 
-# -- module-level mirrors of the numpy free functions this repo used --------
-
+# module-level mirrors of the numpy free functions this repo used
 def zeros(shape: Shape) -> CamelArray: return CamelArray.zeros(shape)
 def ones(shape: Shape) -> CamelArray: return CamelArray.ones(shape)
 def zeros_like(a: CamelArray) -> CamelArray: return CamelArray.zeros_like(a)

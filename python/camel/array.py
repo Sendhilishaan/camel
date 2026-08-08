@@ -118,6 +118,9 @@ class CamelArray:
             raise ValueError(f"item() needs a single-element array, got shape {self.shape}")
         return self._buf[0]
 
+    def tolist(self) -> list:
+        return list(self._buf)
+
     def reshape(self, *shape) -> CamelArray:
         if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
             shape = tuple(shape[0])

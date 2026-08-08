@@ -78,3 +78,19 @@ if SIMD_AVAILABLE:
         _simd_fn = getattr(c, f"{_name}_simd")
         _simd_fn.argtypes = _naive_fn.argtypes
         _simd_fn.restype = _naive_fn.restype
+
+# Metal kernels: same shape as naive, but MSL has no double, so every
+# POINTER(c_double)/c_double slot becomes POINTER(c_float)/c_float.
+_METAL_TYPE_MAP = {POINTER(c_double): POINTER(c_float), c_double: c_float}
+
+METAL_AVAILABLE = hasattr(c, "matmul_forward_metal")
+
+if METAL_AVAILABLE:
+    for _name in _KERNEL_NAMES:
+        _naive_fn = getattr(c, _name)
+        _metal_fn = getattr(c, f"{_name}_metal")
+        _metal_fn.argtypes = [_METAL_TYPE_MAP.get(t, t) for t in _naive_fn.argtypes]
+        _metal_fn.restype = _naive_fn.restype
+
+    c.camel_metal_device_available.argtypes = []
+    c.camel_metal_device_available.restype = c_int

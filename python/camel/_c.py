@@ -153,3 +153,8 @@ if METAL_AVAILABLE:
 
     c.softmax_xent_backward_metal_resident.argtypes = [c_void_p, c_void_p, c_float, c_int, c_int]
     c.softmax_xent_backward_metal_resident.restype = c_void_p
+
+    # combines two same-shape gradient buffers on the GPU (Tensor._accum's
+    # fan-out case); metal-resident only, nothing else needs this
+    c.add_metal_resident.argtypes = [c_void_p, c_void_p, c_int]
+    c.add_metal_resident.restype = c_void_p

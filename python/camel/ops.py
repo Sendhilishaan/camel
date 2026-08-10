@@ -350,3 +350,12 @@ class Ops:
         dZ_buf = Vbuf.zeros(n, m)
         Ops._kernel("softmax_xent_backward")(probs.ptr, Y.ptr, dZ_buf.ptr, g, n, m)
         return dZ_buf
+
+    @staticmethod
+    def accumulate(a: Vbuf, b: Vbuf) -> Vbuf:
+        # combines two same-shape gradient buffers on a fan-out node
+        # (Tensor._accum); only called under the metal backend - naive/simd
+        # accumulate directly via CamelArray, no round-trip to avoid there
+        n, m = a.shape
+        out_handle = c.add_metal_resident(a.gpu_handle(), b.gpu_handle(), n * m)
+        return Vbuf.from_gpu(out_handle, n, m)

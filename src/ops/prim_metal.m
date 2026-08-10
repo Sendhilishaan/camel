@@ -280,6 +280,25 @@ static id<MTLBuffer> dispatch_matsub_forward(id<MTLBuffer> A, id<MTLBuffer> B, i
     return out;
 }
 
+// combines two same-shape gradient buffers on the GPU (Tensor._accum's
+// fan-out case); no copy-based variant since only the resident path needs it
+static id<MTLBuffer> dispatch_add(id<MTLBuffer> A, id<MTLBuffer> B, int total) {
+    id<MTLBuffer> out = buf_out(total);
+    int dims[1] = { total };
+    id<MTLCommandBuffer> cmd = [g_queue commandBuffer];
+    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+    [enc setComputePipelineState:get_pipeline(@"k_add")];
+    [enc setBuffer:A offset:0 atIndex:0];
+    [enc setBuffer:B offset:0 atIndex:1];
+    [enc setBuffer:out offset:0 atIndex:2];
+    [enc setBytes:dims length:sizeof(dims) atIndex:3];
+    [enc dispatchThreads:MTLSizeMake(total, 1, 1) threadsPerThreadgroup:MTLSizeMake(clampu(total, 64), 1, 1)];
+    [enc endEncoding];
+    [cmd commit];
+    [cmd waitUntilCompleted];
+    return out;
+}
+
 static void dispatch_matsub_backward(id<MTLBuffer> G, int total, id<MTLBuffer> *outDA, id<MTLBuffer> *outDB) {
     id<MTLBuffer> bufDB = buf_out(total);
     int dims[1] = { total };
@@ -683,6 +702,14 @@ EXPORT void *matsub_forward_metal_resident(void *a, void *b, int n, int m) {
     ensure_metal();
     @autoreleasepool {
         id<MTLBuffer> result = dispatch_matsub_forward((__bridge id<MTLBuffer>)a, (__bridge id<MTLBuffer>)b, n * m);
+        return (void *)CFBridgingRetain(result);
+    }
+}
+
+EXPORT void *add_metal_resident(void *a, void *b, int total) {
+    ensure_metal();
+    @autoreleasepool {
+        id<MTLBuffer> result = dispatch_add((__bridge id<MTLBuffer>)a, (__bridge id<MTLBuffer>)b, total);
         return (void *)CFBridgingRetain(result);
     }
 }

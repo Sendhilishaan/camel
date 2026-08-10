@@ -83,6 +83,17 @@ kernel void k_matsub_forward(device const float* A [[buffer(0)]],
     out[gid] = A[gid] - B[gid];
 }
 
+// plain elementwise A + B, same shape - used to combine gradient
+// contributions on a fan-out node (see Tensor._accum), not a Tensor op
+kernel void k_add(device const float* A [[buffer(0)]],
+                   device const float* B [[buffer(1)]],
+                   device float* out [[buffer(2)]],
+                   constant int* dims [[buffer(3)]],
+                   uint gid [[thread_position_in_grid]]) {
+    if ((int)gid >= dims[0]) return;
+    out[gid] = A[gid] + B[gid];
+}
+
 kernel void k_negate(device const float* x [[buffer(0)]],
                       device float* out [[buffer(1)]],
                       constant int* dims [[buffer(2)]],

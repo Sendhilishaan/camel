@@ -82,4 +82,8 @@ EXPORT void *relu_backward_metal_resident(void* out, void* grad_out, int n, int 
 EXPORT void softmax_xent_forward_metal_resident(void* z, void* y, int n, int m, void** outProbs, float* outLoss);
 EXPORT void *softmax_xent_backward_metal_resident(void* probs, void* y, float grad_out, int n, int m);
 
+// plain elementwise add for combining gradients on a fan-out node
+// (Tensor._accum); metal-resident only, no naive/simd/copy-based variant
+EXPORT void *add_metal_resident(void* a, void* b, int total);
+
 #endif

@@ -1,16 +1,47 @@
 from __future__ import annotations
 import os
-from ctypes import c_float
+from ctypes import c_float, c_void_p, byref
 from ._c import c, SIMD_AVAILABLE, METAL_AVAILABLE
 from camel.array import CamelArray
 from typing import Tuple
 
 class Vbuf:
-    def __init__(self, data: CamelArray):
-        # CamelArray is always float64 and contiguous, so no coercion needed here
-        self.data = data
-        self.ptr = self.data.ptr
-        self.shape = self.data.shape
+    def __init__(self, data: CamelArray | None = None, _gpu_handle=None, _shape=None):
+        if _gpu_handle is not None:
+            # GPU-only: no CPU copy exists yet, materialize() builds one lazily.
+            # version=-1 can never match a real CamelArray.version, so the
+            # first gpu_handle() call after a materialize() correctly treats
+            # the handle as still fresh rather than re-uploading it.
+            self._data = None
+            self.shape = _shape
+            self._gpu = (_gpu_handle, -1)
+            return
+        self._data = data
+        self.shape = data.shape
+        self._gpu = None  # (handle, version) - lazily created by gpu_handle()
+
+    def __del__(self):
+        if self._gpu is not None:
+            c.camel_metal_buffer_free(self._gpu[0])
+
+    @property
+    def data(self) -> CamelArray:
+        if self._data is None:
+            self._materialize()
+        return self._data
+
+    @data.setter
+    def data(self, value: CamelArray) -> None:
+        # `vbuf.data += x` round-trips through this setter even though
+        # CamelArray.__iadd__ already mutated in place and returned self
+        self._data = value
+        if self._gpu is not None:
+            c.camel_metal_buffer_free(self._gpu[0])
+            self._gpu = None
+
+    @property
+    def ptr(self):
+        return self.data.ptr
 
     @staticmethod # factory
     def zeros(n: int, m: int) -> Vbuf:
@@ -28,6 +59,34 @@ class Vbuf:
     @staticmethod
     def from_float32(buf, n: int, m: int) -> Vbuf:
         return Vbuf(CamelArray(list(buf)).reshape(n, m))
+
+    @staticmethod
+    def from_gpu(handle, n: int, m: int) -> Vbuf:
+        return Vbuf(_gpu_handle=handle, _shape=(n, m))
+
+    def gpu_handle(self):
+        # cache hit: a GPU-only Vbuf's handle is always valid (nothing can
+        # have mutated it, since materializing would have stamped a version);
+        # a CPU-backed one is valid only if nothing mutated .data in place since
+        if self._gpu is not None:
+            handle, cached_version = self._gpu
+            if self._data is None or self._data.version == cached_version:
+                return handle
+            c.camel_metal_buffer_free(handle)
+            self._gpu = None
+
+        n, m = self.shape
+        handle = c.camel_metal_buffer_create(self.to_float32(), n * m)
+        self._gpu = (handle, self.data.version)
+        return handle
+
+    def _materialize(self) -> None:
+        handle, _ = self._gpu
+        n, m = self.shape
+        buf = (c_float * (n * m))()
+        c.camel_metal_buffer_read(handle, buf, n * m)
+        self._data = CamelArray(list(buf)).reshape(n, m)
+        self._gpu = (handle, self._data.version) # re-sync: freshly read, not stale
 
 
 def _resolve_backend(name: str) -> str:
@@ -82,9 +141,8 @@ class Ops:
         n, k, m = A.shape[0], A.shape[1], B.shape[1]
 
         if Ops.backend == "metal":
-            out_buf = (c_float * (n * m))()
-            c.matmul_forward_metal(A.to_float32(), B.to_float32(), out_buf, n, k, m)
-            return Vbuf.from_float32(out_buf, n, m)
+            out_handle = c.matmul_forward_metal_resident(A.gpu_handle(), B.gpu_handle(), n, k, m)
+            return Vbuf.from_gpu(out_handle, n, m)
 
         result_buf = Vbuf.zeros(n, m)
         Ops._kernel("matmul_forward")(A.ptr, B.ptr, result_buf.ptr, n, k, m)
@@ -95,10 +153,10 @@ class Ops:
         n, k, m = A.shape[0], A.shape[1], B.shape[1]
 
         if Ops.backend == "metal":
-            da_buf = (c_float * (n * k))()
-            db_buf = (c_float * (k * m))()
-            c.matmul_backward_metal(A.to_float32(), B.to_float32(), grad_out.to_float32(), da_buf, db_buf, n, k, m)
-            return (Vbuf.from_float32(da_buf, n, k), Vbuf.from_float32(db_buf, k, m))
+            da_h, db_h = c_void_p(), c_void_p()
+            c.matmul_backward_metal_resident(A.gpu_handle(), B.gpu_handle(), grad_out.gpu_handle(),
+                                              n, k, m, byref(da_h), byref(db_h))
+            return (Vbuf.from_gpu(da_h.value, n, k), Vbuf.from_gpu(db_h.value, k, m))
 
         dA_buf = Vbuf.zeros(n, k)
         dB_buf = Vbuf.zeros(k, m)
@@ -110,9 +168,8 @@ class Ops:
         n, m = A.shape[0], A.shape[1]
 
         if Ops.backend == "metal":
-            out_buf = A.to_float32() # fresh staging copy, safe to mutate in place
-            c.matadd_broadcast_forward_metal(out_buf, B.to_float32(), n, m)
-            return Vbuf.from_float32(out_buf, n, m)
+            out_handle = c.matadd_broadcast_forward_metal_resident(A.gpu_handle(), B.gpu_handle(), n, m)
+            return Vbuf.from_gpu(out_handle, n, m)
 
         out = Vbuf(A.data.copy()) # add kernel is inplace (fix?)
         Ops._kernel("matadd_broadcast_forward")(out.ptr, B.ptr, n, m)
@@ -123,10 +180,9 @@ class Ops:
         n, m = grad_out.shape[0], grad_out.shape[1]
 
         if Ops.backend == "metal":
-            dX_buf = (c_float * (n * m))()
-            db_buf = (c_float * m)()
-            c.matadd_broadcast_backward_metal(grad_out.to_float32(), dX_buf, db_buf, n, m)
-            return (Vbuf.from_float32(dX_buf, n, m), Vbuf.from_float32(db_buf, 1, m))
+            dx_h, db_h = c_void_p(), c_void_p()
+            c.matadd_broadcast_backward_metal_resident(grad_out.gpu_handle(), n, m, byref(dx_h), byref(db_h))
+            return (Vbuf.from_gpu(dx_h.value, n, m), Vbuf.from_gpu(db_h.value, 1, m))
 
         dX_buf = Vbuf.zeros(n, m)
         dB_buf = Vbuf.zeros(1, m)
@@ -138,9 +194,8 @@ class Ops:
         n, m = A.shape[0], B.shape[1]
 
         if Ops.backend == "metal":
-            out_buf = (c_float * (n * m))()
-            c.matsub_forward_metal(A.to_float32(), B.to_float32(), out_buf, n, m)
-            return Vbuf.from_float32(out_buf, n, m)
+            out_handle = c.matsub_forward_metal_resident(A.gpu_handle(), B.gpu_handle(), n, m)
+            return Vbuf.from_gpu(out_handle, n, m)
 
         out = Vbuf.zeros(n, m)
         Ops._kernel("matsub_forward")(A.ptr, B.ptr, out.ptr, n, m)
@@ -151,10 +206,9 @@ class Ops:
         n, m = grad_out.shape[0], grad_out.shape[1]
 
         if Ops.backend == "metal":
-            dA_buf = (c_float * (n * m))()
-            dB_buf = (c_float * (n * m))()
-            c.matsub_backward_metal(grad_out.to_float32(), dA_buf, dB_buf, n, m)
-            return (Vbuf.from_float32(dA_buf, n, m), Vbuf.from_float32(dB_buf, n, m))
+            da_h, db_h = c_void_p(), c_void_p()
+            c.matsub_backward_metal_resident(grad_out.gpu_handle(), n, m, byref(da_h), byref(db_h))
+            return (Vbuf.from_gpu(da_h.value, n, m), Vbuf.from_gpu(db_h.value, n, m))
 
         dA_buf = Vbuf.zeros(n, m)
         dB_buf = Vbuf.zeros(n, m)
@@ -166,9 +220,8 @@ class Ops:
         n, m = A.shape[0], B.shape[1]
 
         if Ops.backend == "metal":
-            out_buf = (c_float * (n * m))()
-            c.hadamard_forward_metal(A.to_float32(), B.to_float32(), out_buf, n, m)
-            return Vbuf.from_float32(out_buf, n, m)
+            out_handle = c.hadamard_forward_metal_resident(A.gpu_handle(), B.gpu_handle(), n, m)
+            return Vbuf.from_gpu(out_handle, n, m)
 
         out = Vbuf.zeros(n, m)
         Ops._kernel("hadamard_forward")(A.ptr, B.ptr, out.ptr, n, m)
@@ -179,10 +232,10 @@ class Ops:
         n, m = A.shape[0], B.shape[1]
 
         if Ops.backend == "metal":
-            dA_buf = (c_float * (n * m))()
-            dB_buf = (c_float * (n * m))()
-            c.hadamard_backward_metal(grad_out.to_float32(), A.to_float32(), B.to_float32(), dA_buf, dB_buf, n, m)
-            return (Vbuf.from_float32(dA_buf, n, m), Vbuf.from_float32(dB_buf, n, m))
+            da_h, db_h = c_void_p(), c_void_p()
+            c.hadamard_backward_metal_resident(grad_out.gpu_handle(), A.gpu_handle(), B.gpu_handle(),
+                                                n, m, byref(da_h), byref(db_h))
+            return (Vbuf.from_gpu(da_h.value, n, m), Vbuf.from_gpu(db_h.value, n, m))
 
         dA_buf = Vbuf.zeros(n, m)
         dB_buf = Vbuf.zeros(n, m)
@@ -194,9 +247,8 @@ class Ops:
         n, m = A.shape[0], A.shape[1]
 
         if Ops.backend == "metal":
-            out_buf = (c_float * 1)()
-            c.matmean_forward_metal(A.to_float32(), out_buf, n * m)
-            return Vbuf.from_float32(out_buf, 1, 1)
+            out_handle = c.matmean_forward_metal_resident(A.gpu_handle(), n * m)
+            return Vbuf.from_gpu(out_handle, 1, 1)
 
         out = Vbuf.zeros(1, 1) # scalar
         Ops._kernel("matmean_forward")(A.ptr, out.ptr, n * m)
@@ -205,12 +257,11 @@ class Ops:
     @staticmethod # A is input buf
     def mean_backward(A: Vbuf, grad_out: Vbuf) -> Vbuf:
         n_total = A.shape[0] * A.shape[1]
-        g = grad_out.data.item()
+        g = grad_out.data.item() # scalar grad, always materialized to CPU
 
         if Ops.backend == "metal":
-            dx_buf = (c_float * n_total)()
-            c.matmean_backward_metal(dx_buf, n_total, g)
-            return Vbuf.from_float32(dx_buf, A.shape[0], A.shape[1])
+            out_handle = c.matmean_backward_metal_resident(n_total, g)
+            return Vbuf.from_gpu(out_handle, A.shape[0], A.shape[1])
 
         dX_buf = Vbuf.zeros(A.shape[0], A.shape[1])
         Ops._kernel("matmean_backward")(dX_buf.ptr, n_total, g)
@@ -221,9 +272,8 @@ class Ops:
         n, m = Z.shape[0], Z.shape[1]
 
         if Ops.backend == "metal":
-            out_buf = (c_float * (n * m))()
-            c.tanh_forward_metal(Z.to_float32(), out_buf, n, m)
-            return Vbuf.from_float32(out_buf, n, m)
+            out_handle = c.tanh_forward_metal_resident(Z.gpu_handle(), n, m)
+            return Vbuf.from_gpu(out_handle, n, m)
 
         out = Vbuf.zeros(n, m)
         Ops._kernel("tanh_forward")(Z.ptr, out.ptr, n, m)
@@ -237,9 +287,8 @@ class Ops:
         n, m = out.shape[0], out.shape[1]
 
         if Ops.backend == "metal":
-            dZ_buf = (c_float * (n * m))()
-            c.tanh_backward_metal(out.to_float32(), grad_out.to_float32(), dZ_buf, n, m)
-            return Vbuf.from_float32(dZ_buf, n, m)
+            out_handle = c.tanh_backward_metal_resident(out.gpu_handle(), grad_out.gpu_handle(), n, m)
+            return Vbuf.from_gpu(out_handle, n, m)
 
         dZ_buf = Vbuf.zeros(n, m)
         Ops._kernel("tanh_backward")(out.ptr, grad_out.ptr, dZ_buf.ptr, n, m)
@@ -250,9 +299,8 @@ class Ops:
         n, m = Z.shape[0], Z.shape[1]
 
         if Ops.backend == "metal":
-            out_buf = (c_float * (n * m))()
-            c.relu_forward_metal(Z.to_float32(), out_buf, n, m)
-            return Vbuf.from_float32(out_buf, n, m)
+            out_handle = c.relu_forward_metal_resident(Z.gpu_handle(), n, m)
+            return Vbuf.from_gpu(out_handle, n, m)
 
         out = Vbuf.zeros(n, m)
         Ops._kernel("relu_forward")(Z.ptr, out.ptr, n, m)
@@ -266,9 +314,8 @@ class Ops:
         n, m = out.shape[0], out.shape[1]
 
         if Ops.backend == "metal":
-            dZ_buf = (c_float * (n * m))()
-            c.relu_backward_metal(out.to_float32(), grad_out.to_float32(), dZ_buf, n, m)
-            return Vbuf.from_float32(dZ_buf, n, m)
+            out_handle = c.relu_backward_metal_resident(out.gpu_handle(), grad_out.gpu_handle(), n, m)
+            return Vbuf.from_gpu(out_handle, n, m)
 
         dZ_buf = Vbuf.zeros(n, m)
         Ops._kernel("relu_backward")(out.ptr, grad_out.ptr, dZ_buf.ptr, n, m)
@@ -282,10 +329,9 @@ class Ops:
         n, m = Z.shape[0], Z.shape[1]
 
         if Ops.backend == "metal":
-            probs_buf = (c_float * (n * m))()
-            loss_buf = (c_float * 1)()
-            c.softmax_xent_forward_metal(Z.to_float32(), Y.to_float32(), probs_buf, loss_buf, n, m)
-            return (Vbuf.from_float32(probs_buf, n, m), Vbuf.from_float32(loss_buf, 1, 1))
+            probs_h, loss = c_void_p(), c_float()
+            c.softmax_xent_forward_metal_resident(Z.gpu_handle(), Y.gpu_handle(), n, m, byref(probs_h), byref(loss))
+            return (Vbuf.from_gpu(probs_h.value, n, m), Vbuf(CamelArray([[loss.value]])))
 
         probs = Vbuf.zeros(n, m)
         loss = Vbuf.zeros(1, 1) # scalar
@@ -295,12 +341,11 @@ class Ops:
     @staticmethod # probs is the cached softmax from forward
     def softmax_xent_backward(probs: Vbuf, Y: Vbuf, grad_out: Vbuf) -> Vbuf:
         n, m = probs.shape[0], probs.shape[1]
-        g = grad_out.data.item()
+        g = grad_out.data.item() # scalar grad, always materialized to CPU
 
         if Ops.backend == "metal":
-            dZ_buf = (c_float * (n * m))()
-            c.softmax_xent_backward_metal(probs.to_float32(), Y.to_float32(), dZ_buf, g, n, m)
-            return Vbuf.from_float32(dZ_buf, n, m)
+            out_handle = c.softmax_xent_backward_metal_resident(probs.gpu_handle(), Y.gpu_handle(), g, n, m)
+            return Vbuf.from_gpu(out_handle, n, m)
 
         dZ_buf = Vbuf.zeros(n, m)
         Ops._kernel("softmax_xent_backward")(probs.ptr, Y.ptr, dZ_buf.ptr, g, n, m)

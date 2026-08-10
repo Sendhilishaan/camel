@@ -94,3 +94,62 @@ if METAL_AVAILABLE:
 
     c.camel_metal_device_available.argtypes = []
     c.camel_metal_device_available.restype = c_int
+
+    # resident API: void* is an opaque GPU buffer handle, lets a chain of ops
+    # stay on the GPU without a CPU round trip between each call
+    c.camel_metal_buffer_create.argtypes = [POINTER(c_float), c_int]
+    c.camel_metal_buffer_create.restype = c_void_p
+
+    c.camel_metal_buffer_read.argtypes = [c_void_p, POINTER(c_float), c_int]
+    c.camel_metal_buffer_read.restype = None
+
+    c.camel_metal_buffer_free.argtypes = [c_void_p]
+    c.camel_metal_buffer_free.restype = None
+
+    c.matmul_forward_metal_resident.argtypes = [c_void_p, c_void_p, c_int, c_int, c_int]
+    c.matmul_forward_metal_resident.restype = c_void_p
+
+    c.matmul_backward_metal_resident.argtypes = [c_void_p, c_void_p, c_void_p, c_int, c_int, c_int, POINTER(c_void_p), POINTER(c_void_p)]
+    c.matmul_backward_metal_resident.restype = None
+
+    c.matadd_broadcast_forward_metal_resident.argtypes = [c_void_p, c_void_p, c_int, c_int]
+    c.matadd_broadcast_forward_metal_resident.restype = c_void_p
+
+    c.matadd_broadcast_backward_metal_resident.argtypes = [c_void_p, c_int, c_int, POINTER(c_void_p), POINTER(c_void_p)]
+    c.matadd_broadcast_backward_metal_resident.restype = None
+
+    c.matsub_forward_metal_resident.argtypes = [c_void_p, c_void_p, c_int, c_int]
+    c.matsub_forward_metal_resident.restype = c_void_p
+
+    c.matsub_backward_metal_resident.argtypes = [c_void_p, c_int, c_int, POINTER(c_void_p), POINTER(c_void_p)]
+    c.matsub_backward_metal_resident.restype = None
+
+    c.hadamard_forward_metal_resident.argtypes = [c_void_p, c_void_p, c_int, c_int]
+    c.hadamard_forward_metal_resident.restype = c_void_p
+
+    c.hadamard_backward_metal_resident.argtypes = [c_void_p, c_void_p, c_void_p, c_int, c_int, POINTER(c_void_p), POINTER(c_void_p)]
+    c.hadamard_backward_metal_resident.restype = None
+
+    c.matmean_forward_metal_resident.argtypes = [c_void_p, c_int]
+    c.matmean_forward_metal_resident.restype = c_void_p
+
+    c.matmean_backward_metal_resident.argtypes = [c_int, c_float]
+    c.matmean_backward_metal_resident.restype = c_void_p
+
+    c.tanh_forward_metal_resident.argtypes = [c_void_p, c_int, c_int]
+    c.tanh_forward_metal_resident.restype = c_void_p
+
+    c.tanh_backward_metal_resident.argtypes = [c_void_p, c_void_p, c_int, c_int]
+    c.tanh_backward_metal_resident.restype = c_void_p
+
+    c.relu_forward_metal_resident.argtypes = [c_void_p, c_int, c_int]
+    c.relu_forward_metal_resident.restype = c_void_p
+
+    c.relu_backward_metal_resident.argtypes = [c_void_p, c_void_p, c_int, c_int]
+    c.relu_backward_metal_resident.restype = c_void_p
+
+    c.softmax_xent_forward_metal_resident.argtypes = [c_void_p, c_void_p, c_int, c_int, POINTER(c_void_p), POINTER(c_float)]
+    c.softmax_xent_forward_metal_resident.restype = None
+
+    c.softmax_xent_backward_metal_resident.argtypes = [c_void_p, c_void_p, c_float, c_int, c_int]
+    c.softmax_xent_backward_metal_resident.restype = c_void_p

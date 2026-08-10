@@ -62,9 +62,13 @@ def _is_index_seq(x) -> bool:
 
 
 class CamelArray:
-    __slots__ = ("_buf", "shape", "_strides")
+    __slots__ = ("_buf", "shape", "_strides", "version")
 
     def __init__(self, data=None, _shape: Shape | None = None, _buf=None):
+        # version bumps on every in-place mutation, so a cached GPU buffer
+        # keyed to it (see Vbuf) can tell it's gone stale without a value compare
+        self.version = 0
+
         # fast path: wrap an existing buffer under a new shape (used by factories/reshape)
         if _buf is not None:
             self._buf = _buf
@@ -103,8 +107,6 @@ class CamelArray:
     def ptr(self) -> POINTER(c_double):
         """raw double* into this array's buffer, for passing across the ctypes/C boundary."""
         return cast(self._buf, POINTER(c_double))
-
-    # -- basics -------------------------------------------------------------
 
     def copy(self) -> CamelArray:
         return CamelArray(self)
@@ -155,6 +157,7 @@ class CamelArray:
         raise TypeError(f"unsupported CamelArray index: {key!r}")
 
     def __setitem__(self, key, value) -> None:
+        self.version += 1
         if isinstance(key, slice) and key == slice(None):
             other = value if isinstance(value, CamelArray) else CamelArray(value)
             if _prod(other.shape) != len(self._buf):
@@ -198,6 +201,7 @@ class CamelArray:
 
     def _inplace(self, other, op) -> None:
         # mutates in place (no realloc) so cached pointers like Vbuf.ptr stay valid
+        self.version += 1
         if isinstance(other, (int, float)):
             for i in range(len(self._buf)):
                 self._buf[i] = op(self._buf[i], other)

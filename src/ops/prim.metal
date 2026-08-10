@@ -50,6 +50,19 @@ kernel void k_matadd_broadcast_forward(device float* A [[buffer(0)]],
     A[i*m+j] += B[j];
 }
 
+// same as above but writes to a separate buffer instead of mutating A in
+// place - needed when A's buffer may be a cached, shared GPU-resident value
+kernel void k_matadd_broadcast_forward_out(device const float* A [[buffer(0)]],
+                                            device const float* B [[buffer(1)]],
+                                            device float* out [[buffer(2)]],
+                                            constant int* dims [[buffer(3)]],
+                                            uint2 gid [[thread_position_in_grid]]) {
+    int n = dims[0], m = dims[1];
+    int i = gid.y, j = gid.x;
+    if (i >= n || j >= m) return;
+    out[i*m+j] = A[i*m+j] + B[j];
+}
+
 kernel void k_matadd_broadcast_backward_db(device const float* grad_out [[buffer(0)]],
                                             device float* db [[buffer(1)]],
                                             constant int* dims [[buffer(2)]],

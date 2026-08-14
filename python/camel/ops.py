@@ -88,6 +88,12 @@ class Vbuf:
         self._data = CamelArray(list(buf)).reshape(n, m)
         self._gpu = (handle, self._data.version) # re-sync: freshly read, not stale
 
+    def mark_gpu_mutated(self) -> None:
+        # for callers that mutate this Vbuf's cached GPU buffer directly, in
+        # place (see the optimizer step kernels): drops the now-stale CPU
+        # copy so the next .data access re-reads the fresh value from GPU
+        self._data = None
+
 
 def _resolve_backend(name: str) -> str:
     if name not in ("naive", "simd", "metal"):
@@ -359,3 +365,37 @@ class Ops:
         n, m = a.shape
         out_handle = c.add_metal_resident(a.gpu_handle(), b.gpu_handle(), n * m)
         return Vbuf.from_gpu(out_handle, n, m)
+
+    # optimizer steps: mutate param + state in place on the GPU, so weights
+    # never leave it across a training run. Only called under the metal
+    # backend (optim.py keeps its existing CPU path for naive/simd).
+    @staticmethod
+    def sgd_step(param: Vbuf, velocity: Vbuf, grad: Vbuf, momentum: float, lr: float) -> None:
+        n, m = param.shape
+        c.sgd_step_metal_resident(param.gpu_handle(), velocity.gpu_handle(), grad.gpu_handle(), momentum, lr, n * m)
+        param.mark_gpu_mutated()
+        velocity.mark_gpu_mutated()
+
+    @staticmethod
+    def adagrad_step(param: Vbuf, grad_sum: Vbuf, grad: Vbuf, lr: float, eps: float) -> None:
+        n, m = param.shape
+        c.adagrad_step_metal_resident(param.gpu_handle(), grad_sum.gpu_handle(), grad.gpu_handle(), lr, eps, n * m)
+        param.mark_gpu_mutated()
+        grad_sum.mark_gpu_mutated()
+
+    @staticmethod
+    def rmsprop_step(param: Vbuf, ema_sq: Vbuf, grad: Vbuf, lr: float, eps: float, decay: float) -> None:
+        n, m = param.shape
+        c.rmsprop_step_metal_resident(param.gpu_handle(), ema_sq.gpu_handle(), grad.gpu_handle(), lr, eps, decay, n * m)
+        param.mark_gpu_mutated()
+        ema_sq.mark_gpu_mutated()
+
+    @staticmethod
+    def adam_step(param: Vbuf, exp_avg: Vbuf, exp_avg_sq: Vbuf, grad: Vbuf,
+                  lr: float, eps: float, decay1: float, decay2: float, bc1: float, bc2: float) -> None:
+        n, m = param.shape
+        c.adam_step_metal_resident(param.gpu_handle(), exp_avg.gpu_handle(), exp_avg_sq.gpu_handle(), grad.gpu_handle(),
+                                    lr, eps, decay1, decay2, bc1, bc2, n * m)
+        param.mark_gpu_mutated()
+        exp_avg.mark_gpu_mutated()
+        exp_avg_sq.mark_gpu_mutated()

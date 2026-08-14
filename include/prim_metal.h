@@ -86,4 +86,14 @@ EXPORT void *softmax_xent_backward_metal_resident(void* probs, void* y, float gr
 // (Tensor._accum); metal-resident only, no naive/simd/copy-based variant
 EXPORT void *add_metal_resident(void* a, void* b, int total);
 
+/*
+    optimizer steps: mutate param + state buffer(s) in place (void return),
+    so they never leave the GPU across a training run. Metal-resident only.
+*/
+
+EXPORT void sgd_step_metal_resident(void* param, void* velocity, void* grad, float momentum, float lr, int total);
+EXPORT void adagrad_step_metal_resident(void* param, void* grad_sum, void* grad, float lr, float eps, int total);
+EXPORT void rmsprop_step_metal_resident(void* param, void* ema_sq, void* grad, float lr, float eps, float decay, int total);
+EXPORT void adam_step_metal_resident(void* param, void* exp_avg, void* exp_avg_sq, void* grad, float lr, float eps, float decay1, float decay2, float bc1, float bc2, int total);
+
 #endif

@@ -158,3 +158,16 @@ if METAL_AVAILABLE:
     # fan-out case); metal-resident only, nothing else needs this
     c.add_metal_resident.argtypes = [c_void_p, c_void_p, c_int]
     c.add_metal_resident.restype = c_void_p
+
+    # optimizer steps: mutate param + state buffer(s) in place, void return
+    c.sgd_step_metal_resident.argtypes = [c_void_p, c_void_p, c_void_p, c_float, c_float, c_int]
+    c.sgd_step_metal_resident.restype = None
+
+    c.adagrad_step_metal_resident.argtypes = [c_void_p, c_void_p, c_void_p, c_float, c_float, c_int]
+    c.adagrad_step_metal_resident.restype = None
+
+    c.rmsprop_step_metal_resident.argtypes = [c_void_p, c_void_p, c_void_p, c_float, c_float, c_float, c_int]
+    c.rmsprop_step_metal_resident.restype = None
+
+    c.adam_step_metal_resident.argtypes = [c_void_p, c_void_p, c_void_p, c_void_p, c_float, c_float, c_float, c_float, c_float, c_float, c_int]
+    c.adam_step_metal_resident.restype = None

@@ -808,3 +808,91 @@ EXPORT void *softmax_xent_backward_metal_resident(void *probs, void *y, float gr
         return (void *)CFBridgingRetain(result);
     }
 }
+
+/*
+    optimizer steps: mutate param + state buffer(s) in place, so they never
+    leave the GPU across a training run. Metal-resident only - naive/simd
+    have no round-trip to fix, so their optimizer math stays plain CPU.
+*/
+
+EXPORT void sgd_step_metal_resident(void *param, void *velocity, void *grad, float momentum, float lr, int total) {
+    ensure_metal();
+    @autoreleasepool {
+        float hparams[2] = { momentum, lr };
+        int dims[1] = { total };
+        id<MTLCommandBuffer> cmd = [g_queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+        [enc setComputePipelineState:get_pipeline(@"k_sgd_step")];
+        [enc setBuffer:(__bridge id<MTLBuffer>)param offset:0 atIndex:0];
+        [enc setBuffer:(__bridge id<MTLBuffer>)velocity offset:0 atIndex:1];
+        [enc setBuffer:(__bridge id<MTLBuffer>)grad offset:0 atIndex:2];
+        [enc setBytes:hparams length:sizeof(hparams) atIndex:3];
+        [enc setBytes:dims length:sizeof(dims) atIndex:4];
+        [enc dispatchThreads:MTLSizeMake(total, 1, 1) threadsPerThreadgroup:MTLSizeMake(clampu(total, 64), 1, 1)];
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+    }
+}
+
+EXPORT void adagrad_step_metal_resident(void *param, void *grad_sum, void *grad, float lr, float eps, int total) {
+    ensure_metal();
+    @autoreleasepool {
+        float hparams[2] = { lr, eps };
+        int dims[1] = { total };
+        id<MTLCommandBuffer> cmd = [g_queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+        [enc setComputePipelineState:get_pipeline(@"k_adagrad_step")];
+        [enc setBuffer:(__bridge id<MTLBuffer>)param offset:0 atIndex:0];
+        [enc setBuffer:(__bridge id<MTLBuffer>)grad_sum offset:0 atIndex:1];
+        [enc setBuffer:(__bridge id<MTLBuffer>)grad offset:0 atIndex:2];
+        [enc setBytes:hparams length:sizeof(hparams) atIndex:3];
+        [enc setBytes:dims length:sizeof(dims) atIndex:4];
+        [enc dispatchThreads:MTLSizeMake(total, 1, 1) threadsPerThreadgroup:MTLSizeMake(clampu(total, 64), 1, 1)];
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+    }
+}
+
+EXPORT void rmsprop_step_metal_resident(void *param, void *ema_sq, void *grad, float lr, float eps, float decay, int total) {
+    ensure_metal();
+    @autoreleasepool {
+        float hparams[3] = { lr, eps, decay };
+        int dims[1] = { total };
+        id<MTLCommandBuffer> cmd = [g_queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+        [enc setComputePipelineState:get_pipeline(@"k_rmsprop_step")];
+        [enc setBuffer:(__bridge id<MTLBuffer>)param offset:0 atIndex:0];
+        [enc setBuffer:(__bridge id<MTLBuffer>)ema_sq offset:0 atIndex:1];
+        [enc setBuffer:(__bridge id<MTLBuffer>)grad offset:0 atIndex:2];
+        [enc setBytes:hparams length:sizeof(hparams) atIndex:3];
+        [enc setBytes:dims length:sizeof(dims) atIndex:4];
+        [enc dispatchThreads:MTLSizeMake(total, 1, 1) threadsPerThreadgroup:MTLSizeMake(clampu(total, 64), 1, 1)];
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+    }
+}
+
+EXPORT void adam_step_metal_resident(void *param, void *exp_avg, void *exp_avg_sq, void *grad,
+                                      float lr, float eps, float decay1, float decay2, float bc1, float bc2, int total) {
+    ensure_metal();
+    @autoreleasepool {
+        float hparams[6] = { lr, eps, decay1, decay2, bc1, bc2 };
+        int dims[1] = { total };
+        id<MTLCommandBuffer> cmd = [g_queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+        [enc setComputePipelineState:get_pipeline(@"k_adam_step")];
+        [enc setBuffer:(__bridge id<MTLBuffer>)param offset:0 atIndex:0];
+        [enc setBuffer:(__bridge id<MTLBuffer>)exp_avg offset:0 atIndex:1];
+        [enc setBuffer:(__bridge id<MTLBuffer>)exp_avg_sq offset:0 atIndex:2];
+        [enc setBuffer:(__bridge id<MTLBuffer>)grad offset:0 atIndex:3];
+        [enc setBytes:hparams length:sizeof(hparams) atIndex:4];
+        [enc setBytes:dims length:sizeof(dims) atIndex:5];
+        [enc dispatchThreads:MTLSizeMake(total, 1, 1) threadsPerThreadgroup:MTLSizeMake(clampu(total, 64), 1, 1)];
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+    }
+}

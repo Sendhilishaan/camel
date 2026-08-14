@@ -249,3 +249,73 @@ kernel void k_softmax_xent_forward(device const float* Z [[buffer(0)]],
     for (uint j = tid; j < (uint)m; j += tgSize) p_row[j] /= row_sum;
     if (tid == 0) row_loss[row] = -(row_true - row_max) + log(row_sum);
 }
+
+/*
+    optimizer steps: each mutates param + its state buffer(s) in place, one
+    thread per element, no reduction needed (unlike the forward/backward
+    kernels above, in-place is correct here - state buffers aren't part of
+    the autograd graph, nothing else ever reads a stale copy of them).
+    hparams packs the scalar hyperparameters into one small buffer instead of
+    a separate buffer index per scalar.
+*/
+
+kernel void k_sgd_step(device float* param [[buffer(0)]],
+                        device float* velocity [[buffer(1)]],
+                        device const float* grad [[buffer(2)]],
+                        constant float* hparams [[buffer(3)]], // momentum, lr
+                        constant int* dims [[buffer(4)]],
+                        uint gid [[thread_position_in_grid]]) {
+    if ((int)gid >= dims[0]) return;
+    float momentum = hparams[0], lr = hparams[1];
+    float v = momentum * velocity[gid] + grad[gid];
+    velocity[gid] = v;
+    param[gid] -= lr * v;
+}
+
+kernel void k_adagrad_step(device float* param [[buffer(0)]],
+                            device float* grad_sum [[buffer(1)]],
+                            device const float* grad [[buffer(2)]],
+                            constant float* hparams [[buffer(3)]], // lr, eps
+                            constant int* dims [[buffer(4)]],
+                            uint gid [[thread_position_in_grid]]) {
+    if ((int)gid >= dims[0]) return;
+    float lr = hparams[0], eps = hparams[1];
+    float g = grad[gid];
+    float G = grad_sum[gid] + g * g;
+    grad_sum[gid] = G;
+    param[gid] -= lr * g / (sqrt(G) + eps);
+}
+
+kernel void k_rmsprop_step(device float* param [[buffer(0)]],
+                            device float* ema_sq [[buffer(1)]],
+                            device const float* grad [[buffer(2)]],
+                            constant float* hparams [[buffer(3)]], // lr, eps, decay
+                            constant int* dims [[buffer(4)]],
+                            uint gid [[thread_position_in_grid]]) {
+    if ((int)gid >= dims[0]) return;
+    float lr = hparams[0], eps = hparams[1], decay = hparams[2];
+    float g = grad[gid];
+    float s = decay * ema_sq[gid] + (1.0 - decay) * g * g;
+    ema_sq[gid] = s;
+    param[gid] -= lr * g / (sqrt(s) + eps);
+}
+
+kernel void k_adam_step(device float* param [[buffer(0)]],
+                         device float* exp_avg [[buffer(1)]],
+                         device float* exp_avg_sq [[buffer(2)]],
+                         device const float* grad [[buffer(3)]],
+                         constant float* hparams [[buffer(4)]], // lr, eps, decay1, decay2, bc1, bc2
+                         constant int* dims [[buffer(5)]],
+                         uint gid [[thread_position_in_grid]]) {
+    if ((int)gid >= dims[0]) return;
+    float lr = hparams[0], eps = hparams[1], decay1 = hparams[2], decay2 = hparams[3];
+    float bc1 = hparams[4], bc2 = hparams[5];
+    float g = grad[gid];
+    float m = decay1 * exp_avg[gid] + (1.0 - decay1) * g;
+    float v = decay2 * exp_avg_sq[gid] + (1.0 - decay2) * g * g;
+    exp_avg[gid] = m;
+    exp_avg_sq[gid] = v;
+    float m_hat = m / bc1;
+    float v_hat = v / bc2;
+    param[gid] -= lr * m_hat / (sqrt(v_hat) + eps);
+}

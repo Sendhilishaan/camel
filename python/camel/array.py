@@ -150,11 +150,29 @@ class CamelArray:
         return flat
 
     def __getitem__(self, key):
+        # a bare slice or list of row indices selects along axis 0 only -
+        # batching/k-fold splitting is all either of these is needed for
+        if isinstance(key, slice):
+            return self._gather_rows(range(*key.indices(self.shape[0])))
+        if isinstance(key, list):
+            return self._gather_rows(key)
         if isinstance(key, int):
             key = (key,)
         if isinstance(key, tuple) and all(isinstance(k, int) for k in key):
             return self._buf[self._flat_index(key)]
         raise TypeError(f"unsupported CamelArray index: {key!r}")
+
+    def _gather_rows(self, rows) -> CamelArray:
+        # always a copy, never a view - simpler and safe, and a batch/fold is
+        # cheap next to the compute that follows it
+        rows = list(rows)
+        row_size = _prod(self.shape[1:])
+        flat: list = []
+        for r in rows:
+            start = r * row_size
+            flat.extend(self._buf[start:start + row_size])
+        new_shape = (len(rows),) + self.shape[1:]
+        return CamelArray(_buf=(c_double * len(flat))(*flat), _shape=new_shape)
 
     def __setitem__(self, key, value) -> None:
         self.version += 1

@@ -1,7 +1,7 @@
 """
-Benchmarks naive vs Apple SIMD vs Metal on this machine: a raw matmul sweep
+Benchmarks naive vs Apple SIMD vs Metal vs CUDA on this machine: a raw matmul sweep
 first, then full MLP forward+backward+optimizer-step timing at increasing
-network sizes. Metal skips gracefully if there's no accessible GPU device.
+network sizes. Unavailable backends skip gracefully.
 
 Naive gets impractically slow at the larger sizes (that's the whole reason
 SIMD and Metal backends exist), so it's dropped past a size where a single
@@ -16,13 +16,16 @@ from camel.nn import MLP
 from camel.optim import SGD
 
 NAIVE_MAX_ELEMS = 512 * 512  # n*k for matmul, batch*width for training - naive cutoff
+BACKENDS = ["naive", "simd", "metal", "cuda"]
 
 
 def timeit(fn, reps: int) -> float:
     fn() # warm up: compiles metal pipelines, primes pow2 threadgroup sizing etc.
+    Ops.synchronize()
     t0 = time.perf_counter()
     for _ in range(reps):
         fn()
+    Ops.synchronize() # CUDA launches are asynchronous; time completed work
     return (time.perf_counter() - t0) / reps
 
 
@@ -59,24 +62,26 @@ def fmt(t: float | None) -> str:
 def run(label: str, backends: list, work_fn, reps: int) -> None:
     times = {}
     for backend in backends:
-        if backend == "metal" and not Ops.metal_device_available():
+        if ((backend == "simd" and not Ops.simd_available()) or
+            (backend == "metal" and not Ops.metal_device_available()) or
+            (backend == "cuda" and not Ops.cuda_device_available())):
             times[backend] = None
             continue
         times[backend] = work_fn(backend, reps)
-    print(f"{label:>24} {fmt(times.get('naive')):>13} {fmt(times.get('simd')):>13} {fmt(times.get('metal')):>13}")
+    print(f"{label:>24} " + " ".join(f"{fmt(times.get(b)):>13}" for b in BACKENDS))
 
 
 def main():
     print("matmul_forward(A, B), A:(n,k) B:(k,m)")
-    print(f"{'size':>24} {'naive':>13} {'simd':>13} {'metal':>13}")
+    print(f"{'size':>24} " + " ".join(f"{b:>13}" for b in BACKENDS))
     for n, k, m in [(64, 64, 64), (256, 256, 256), (512, 512, 512), (1024, 1024, 1024), (2048, 2048, 2048)]:
-        backends = ["naive", "simd", "metal"] if n * k <= NAIVE_MAX_ELEMS else ["simd", "metal"]
+        backends = BACKENDS if n * k <= NAIVE_MAX_ELEMS else BACKENDS[1:]
         reps = 5 if n <= 256 else 2
         run(f"{n}x{k}x{m}", backends, lambda b, r, n=n, k=k, m=m: bench_matmul(b, n, k, m, r), reps)
 
     print()
     print("MLP train step: forward + backward + SGD step, `depth` hidden layers of `width`")
-    print(f"{'batch/width/depth':>24} {'naive':>13} {'simd':>13} {'metal':>13}")
+    print(f"{'batch/width/depth':>24} " + " ".join(f"{b:>13}" for b in BACKENDS))
     configs = [
         (64, 32, 2),
         (256, 128, 3),
@@ -85,7 +90,7 @@ def main():
         (1024, 1024, 4),
     ]
     for batch, width, depth in configs:
-        backends = ["naive", "simd", "metal"] if batch * width <= NAIVE_MAX_ELEMS else ["simd", "metal"]
+        backends = BACKENDS if batch * width <= NAIVE_MAX_ELEMS else BACKENDS[1:]
         reps = 5 if batch <= 256 else 2
         run(f"{batch}/{width}/{depth}", backends, lambda b, r, batch=batch, width=width, depth=depth: bench_train_step(b, batch, width, depth, r), reps)
 

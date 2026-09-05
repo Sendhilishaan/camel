@@ -62,12 +62,12 @@ def _is_index_seq(x) -> bool:
 
 
 class CamelArray:
-    __slots__ = ("_buf", "shape", "_strides", "version")
+    __slots__ = ("_buf", "shape", "_strides", "_version")
 
-    def __init__(self, data=None, _shape: Shape | None = None, _buf=None):
+    def __init__(self, data=None, _shape: Shape | None = None, _buf=None, _version=None):
         # version bumps on every in-place mutation, so a cached GPU buffer
         # keyed to it (see Vbuf) can tell it's gone stale without a value compare
-        self.version = 0
+        self._version = [0] if _version is None else _version
 
         # fast path: wrap an existing buffer under a new shape (used by factories/reshape)
         if _buf is not None:
@@ -88,6 +88,14 @@ class CamelArray:
         self.shape = shape
         self._strides = _row_major_strides(shape)
         self._buf = (c_double * len(flat))(*flat)
+
+    @property
+    def version(self):
+        return self._version[0]
+
+    @version.setter
+    def version(self, value):
+        self._version[0] = value
 
     @staticmethod
     def zeros(shape: Shape) -> CamelArray:
@@ -134,7 +142,7 @@ class CamelArray:
 
         if _prod(shape) != total:
             raise ValueError(f"cannot reshape array of size {total} into shape {shape}")
-        return CamelArray(_buf=self._buf, _shape=shape)  # view: shares the same buffer
+        return CamelArray(_buf=self._buf, _shape=shape, _version=self._version)  # view: shares the same buffer
 
     def __repr__(self) -> str:
         return f"CamelArray(shape={self.shape}, data={list(self._buf)})"

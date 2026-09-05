@@ -163,11 +163,11 @@ class Tensor:
         if not self.requires_grad or delta is None:
             return
         elif self.grad is None:
-            # under metal, delta can be adopted directly instead of copied:
+            # under a GPU backend, delta can be adopted directly instead of copied:
             # every resident dispatch produces a fresh buffer and never
             # mutates an input, so nothing will ever mutate delta in place
-            self.grad = delta if Ops.backend == "metal" else Vbuf(delta.data.copy())
-        elif Ops.backend == "metal":
+            self.grad = delta if Ops.backend in ("metal", "cuda") else Vbuf(delta.data.copy())
+        elif Ops.backend in ("metal", "cuda"):
             self.grad = Ops.accumulate(self.grad, delta)
         else:
             self.grad.data += delta.data

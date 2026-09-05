@@ -24,7 +24,7 @@ class SGD(Optimiser):
 
     def step(self):
         for p, v in zip(self.tensors, self.velocity):
-            if Ops.backend == "metal":
+            if Ops.backend in ("metal", "cuda"):
                 Ops.sgd_step(p.buf, v, p.grad, self.momentum, self.lr)
                 continue
             v.data *= self.momentum
@@ -39,7 +39,7 @@ class AdaGrad(Optimiser):
 
     def step(self):
         for p, G in zip(self.tensors, self.grad_sum):
-            if Ops.backend == "metal":
+            if Ops.backend in ("metal", "cuda"):
                 Ops.adagrad_step(p.buf, G, p.grad, self.lr, self.eps)
                 continue
             G.data += ca.square(p.grad.data) # sum of second moment
@@ -54,7 +54,7 @@ class RMSprop(Optimiser):
 
     def step(self):
         for p, s in zip(self.tensors, self.ema_sq):
-            if Ops.backend == "metal":
+            if Ops.backend in ("metal", "cuda"):
                 Ops.rmsprop_step(p.buf, s, p.grad, self.lr, self.eps, self.decay)
                 continue
             s.data *= self.decay
@@ -79,7 +79,7 @@ class Adam(Optimiser):
         bc2 = 1 - (self.decay2 ** self.t)
 
         for p, m, v in zip(self.tensors, self.exp_avg, self.exp_avg_sq):
-            if Ops.backend == "metal":
+            if Ops.backend in ("metal", "cuda"):
                 Ops.adam_step(p.buf, m, v, p.grad, self.lr, self.eps, self.decay1, self.decay2, bc1, bc2)
                 continue
             m.data *= self.decay1

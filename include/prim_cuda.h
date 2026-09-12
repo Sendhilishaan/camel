@@ -18,6 +18,22 @@ extern "C" {
 EXPORT const char* camel_cuda_get_last_error(void);
 EXPORT void camel_cuda_synchronize(void);
 
+/* CNNs: contiguous NCHW inputs, OIHW filters, dilation=groups=1.
+   Convolution is cross-correlation (the filter is not flipped). Bias may be NULL.
+   Max pooling has no padding, floor output sizing, and first-in-row-major ties.
+   Pool caches own int32 indices plus their dimensions; never pass one as a float buffer. */
+EXPORT void* conv2d_forward_cuda_resident(void* x, void* w, void* b, int n, int c, int h, int width, int f, int kh, int kw, int sh, int sw, int ph, int pw);
+EXPORT void conv2d_backward_cuda_resident(void* x, void* w, void* grad, int n, int c, int h, int width, int f, int kh, int kw, int sh, int sw, int ph, int pw, void** dx, void** dw, void** db);
+EXPORT void conv2d_forward_cuda(const float* x, const float* w, const float* b, float* out, int n, int c, int h, int width, int f, int kh, int kw, int sh, int sw, int ph, int pw);
+EXPORT void conv2d_backward_cuda(const float* x, const float* w, const float* grad, float* dx, float* dw, float* db, int n, int c, int h, int width, int f, int kh, int kw, int sh, int sw, int ph, int pw);
+
+EXPORT void maxpool2d_forward_cuda_resident(void* x, int n, int c, int h, int w, int kh, int kw, int sh, int sw, void** out, void** cache);
+EXPORT void* maxpool2d_backward_cuda_resident(void* grad, void* cache);
+EXPORT void camel_cuda_pool_cache_free(void* cache);
+EXPORT void maxpool2d_forward_cuda(const float* x, float* out, int* indices, int n, int c, int h, int w, int kh, int kw, int sh, int sw);
+EXPORT void maxpool2d_backward_cuda(const float* grad, const int* indices, float* dx, int n, int c, int h, int w, int kh, int kw, int sh, int sw);
+EXPORT void* copy_cuda_resident(void* x, int total);
+
 EXPORT void matmul_forward_cuda(const float* A, const float* B, float* out, int n, int k, int m);
 
 EXPORT void matmul_backward_cuda(const float* A, const float* B, const float* grad_out, float* da, float* db, int n, int k, int m);

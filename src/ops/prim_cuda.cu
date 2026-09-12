@@ -611,3 +611,297 @@ EXPORT void softmax_xent_backward_cuda(const float* probs, const float* Y, float
     result->read(dZ, count2(n, m));
     CUDA_END((void)0)
 }
+
+/*
+    CNN primitives. NCHW: ((batch * channels + channel) * height + y) * width + x.
+    Each backward thread owns one gradient element and gathers contributions,
+    so overlapping windows add correctly without racing or float atomics.
+*/
+struct ConvDims {
+    int n, c, h, w, f, kh, kw, sh, sw, ph, pw, oh, ow, nx, nw, ny;
+
+    ConvDims(int N, int C, int H, int W, int F, int KH, int KW, int SH, int SW, int PH, int PW)
+        : n(N), c(C), h(H), w(W), f(F), kh(KH), kw(KW), sh(SH), sw(SW), ph(PH), pw(PW) {
+        nx = count2(count2(n, c), count2(h, w));
+        nw = count2(count2(f, c), count2(kh, kw));
+        if (sh <= 0 || sw <= 0 || ph < 0 || pw < 0)
+            throw std::runtime_error("invalid CNN stride or padding");
+        long long padded_h = static_cast<long long>(h) + 2LL * ph;
+        long long padded_w = static_cast<long long>(w) + 2LL * pw;
+        if (padded_h > INT_MAX || padded_w > INT_MAX || padded_h < kh || padded_w < kw)
+            throw std::runtime_error("CNN kernel does not fit input or padded dimensions overflow");
+        oh = static_cast<int>((padded_h - kh) / sh + 1);
+        ow = static_cast<int>((padded_w - kw) / sw + 1);
+        ny = count2(count2(n, f), count2(oh, ow));
+    }
+};
+
+__global__ void k_conv2d_forward(const float* x, const float* w, const float* b, float* out, ConvDims d) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= d.ny) return;
+    int ox = i % d.ow, oy = (i / d.ow) % d.oh;
+    int f = (i / d.ow / d.oh) % d.f, batch = i / d.ow / d.oh / d.f;
+    float sum = b ? b[f] : 0.0f;
+    for (int c = 0; c < d.c; c++) {
+        for (int ky = 0; ky < d.kh; ky++) {
+            int iy = oy * d.sh - d.ph + ky;
+            if (iy < 0 || iy >= d.h) continue;
+            for (int kx = 0; kx < d.kw; kx++) {
+                int ix = ox * d.sw - d.pw + kx;
+                if (ix < 0 || ix >= d.w) continue;
+                int xi = ((batch * d.c + c) * d.h + iy) * d.w + ix;
+                int wi = ((f * d.c + c) * d.kh + ky) * d.kw + kx;
+                sum += x[xi] * w[wi];
+            }
+        }
+    }
+    out[i] = sum;
+}
+
+__global__ void k_conv2d_dx(const float* w, const float* g, float* dx, ConvDims d) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= d.nx) return;
+    int ix = i % d.w, iy = (i / d.w) % d.h;
+    int c = (i / d.w / d.h) % d.c, batch = i / d.w / d.h / d.c;
+    float sum = 0.0f;
+    for (int f = 0; f < d.f; f++) {
+        for (int ky = 0; ky < d.kh; ky++) {
+            int oy = iy + d.ph - ky;
+            if (oy < 0 || oy % d.sh) continue;
+            oy /= d.sh;
+            if (oy >= d.oh) continue;
+            for (int kx = 0; kx < d.kw; kx++) {
+                int ox = ix + d.pw - kx;
+                if (ox < 0 || ox % d.sw) continue;
+                ox /= d.sw;
+                if (ox >= d.ow) continue;
+                int wi = ((f * d.c + c) * d.kh + ky) * d.kw + kx;
+                int gi = ((batch * d.f + f) * d.oh + oy) * d.ow + ox;
+                sum += w[wi] * g[gi];
+            }
+        }
+    }
+    dx[i] = sum;
+}
+
+__global__ void k_conv2d_dw(const float* x, const float* g, float* dw, ConvDims d) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= d.nw) return;
+    int kx = i % d.kw, ky = (i / d.kw) % d.kh;
+    int c = (i / d.kw / d.kh) % d.c, f = i / d.kw / d.kh / d.c;
+    float sum = 0.0f;
+    for (int batch = 0; batch < d.n; batch++) {
+        for (int oy = 0; oy < d.oh; oy++) {
+            int iy = oy * d.sh - d.ph + ky;
+            if (iy < 0 || iy >= d.h) continue;
+            for (int ox = 0; ox < d.ow; ox++) {
+                int ix = ox * d.sw - d.pw + kx;
+                if (ix < 0 || ix >= d.w) continue;
+                int xi = ((batch * d.c + c) * d.h + iy) * d.w + ix;
+                int gi = ((batch * d.f + f) * d.oh + oy) * d.ow + ox;
+                sum += x[xi] * g[gi];
+            }
+        }
+    }
+    dw[i] = sum;
+}
+
+__global__ void k_conv2d_db(const float* g, float* db, ConvDims d) {
+    int f = blockIdx.x * blockDim.x + threadIdx.x;
+    if (f >= d.f) return;
+    float sum = 0.0f;
+    for (int batch = 0; batch < d.n; batch++)
+        for (int j = 0; j < d.oh * d.ow; j++) sum += g[(batch * d.f + f) * d.oh * d.ow + j];
+    db[f] = sum;
+}
+
+static Buf conv_forward(const float* x, const float* w, const float* b, ConvDims d) {
+    auto out = empty(d.ny);
+    k_conv2d_forward<<<blocks(d.ny), THREADS>>>(x, w, b, out->data, d);
+    check(cudaGetLastError());
+    return out;
+}
+
+static void conv_backward(const float* x, const float* w, const float* g, ConvDims d, Buf& dx, Buf& dw, Buf& db) {
+    dx = empty(d.nx); dw = empty(d.nw); db = empty(d.f);
+    k_conv2d_dx<<<blocks(d.nx), THREADS>>>(w, g, dx->data, d);
+    check(cudaGetLastError());
+    k_conv2d_dw<<<blocks(d.nw), THREADS>>>(x, g, dw->data, d);
+    check(cudaGetLastError());
+    k_conv2d_db<<<blocks(d.f), THREADS>>>(g, db->data, d);
+    check(cudaGetLastError());
+}
+
+EXPORT void* conv2d_forward_cuda_resident(void* x, void* w, void* b, int n, int c, int h, int width, int f, int kh, int kw, int sh, int sw, int ph, int pw) {
+    CUDA_BEGIN
+    ConvDims d(n, c, h, width, f, kh, kw, sh, sw, ph, pw);
+    return conv_forward(ptr(x, d.nx), ptr(w, d.nw), b ? ptr(b, f) : nullptr, d).release();
+    CUDA_END(nullptr)
+}
+
+EXPORT void conv2d_backward_cuda_resident(void* x, void* w, void* grad, int n, int c, int h, int width, int f, int kh, int kw, int sh, int sw, int ph, int pw, void** outDX, void** outDW, void** outDB) {
+    CUDA_BEGIN
+    if (!outDX || !outDW || !outDB || outDX == outDW || outDX == outDB || outDW == outDB)
+        throw std::runtime_error("invalid CUDA output slots");
+    *outDX = *outDW = *outDB = nullptr;
+    ConvDims d(n, c, h, width, f, kh, kw, sh, sw, ph, pw);
+    Buf dx, dw, db;
+    conv_backward(ptr(x, d.nx), ptr(w, d.nw), ptr(grad, d.ny), d, dx, dw, db);
+    *outDX = dx.release(); *outDW = dw.release(); *outDB = db.release();
+    CUDA_END((void)0)
+}
+
+EXPORT void conv2d_forward_cuda(const float* x, const float* w, const float* b, float* out, int n, int c, int h, int width, int f, int kh, int kw, int sh, int sw, int ph, int pw) {
+    CUDA_BEGIN
+    ConvDims d(n, c, h, width, f, kh, kw, sh, sw, ph, pw);
+    if (!x || !w || !out) throw std::runtime_error("null CNN input/output");
+    auto X = upload(x, d.nx), W = upload(w, d.nw), B = b ? upload(b, f) : Buf();
+    auto result = conv_forward(X->data, W->data, B ? B->data : nullptr, d);
+    result->read(out, d.ny);
+    CUDA_END((void)0)
+}
+
+EXPORT void conv2d_backward_cuda(const float* x, const float* w, const float* grad, float* outDX, float* outDW, float* outDB, int n, int c, int h, int width, int f, int kh, int kw, int sh, int sw, int ph, int pw) {
+    CUDA_BEGIN
+    ConvDims d(n, c, h, width, f, kh, kw, sh, sw, ph, pw);
+    if (!x || !w || !grad || !outDX || !outDW || !outDB) throw std::runtime_error("null CNN input/output");
+    auto X = upload(x, d.nx), W = upload(w, d.nw), G = upload(grad, d.ny);
+    Buf dx, dw, db;
+    conv_backward(X->data, W->data, G->data, d, dx, dw, db);
+    dx->read(outDX, d.nx); dw->read(outDW, d.nw); db->read(outDB, f);
+    CUDA_END((void)0)
+}
+
+struct PoolDims {
+    int n, c, h, w, kh, kw, sh, sw, oh, ow, nx, ny;
+    PoolDims(int N, int C, int H, int W, int KH, int KW, int SH, int SW)
+        : n(N), c(C), h(H), w(W), kh(KH), kw(KW), sh(SH), sw(SW) {
+        nx = count2(count2(n, c), count2(h, w));
+        if (kh <= 0 || kw <= 0 || sh <= 0 || sw <= 0 || kh > h || kw > w)
+            throw std::runtime_error("invalid maxpool kernel or stride");
+        oh = (h - kh) / sh + 1; ow = (w - kw) / sw + 1;
+        ny = count2(count2(n, c), count2(oh, ow));
+    }
+};
+
+struct PoolCache {
+    PoolDims dims;
+    int* indices = nullptr;
+    explicit PoolCache(PoolDims d) : dims(d) {
+        check(cudaMalloc(reinterpret_cast<void**>(&indices), sizeof(int) * d.ny));
+    }
+    ~PoolCache() { if (indices) cudaFree(indices); }
+    PoolCache(const PoolCache&) = delete;
+    PoolCache& operator=(const PoolCache&) = delete;
+};
+using Pool = std::unique_ptr<PoolCache>;
+
+__global__ void k_maxpool2d_forward(const float* x, float* out, int* indices, PoolDims d) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= d.ny) return;
+    int ox = i % d.ow, oy = (i / d.ow) % d.oh, plane = i / d.ow / d.oh;
+    float best = -CUDART_INF_F;
+    int winner = -1;
+    for (int ky = 0; ky < d.kh; ky++) {
+        for (int kx = 0; kx < d.kw; kx++) {
+            int xi = (plane * d.h + oy * d.sh + ky) * d.w + ox * d.sw + kx;
+            float value = x[xi];
+            // First maximum (also handles an all -inf window); first NaN propagates.
+            if (winner < 0 || value > best || (isnan(value) && !isnan(best))) {
+                best = value; winner = xi;
+            }
+        }
+    }
+    out[i] = best; indices[i] = winner;
+}
+
+__global__ void k_maxpool2d_backward(const float* g, const int* indices, float* dx, PoolDims d) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= d.nx) return;
+    int ix = i % d.w, iy = (i / d.w) % d.h, plane = i / d.w / d.h;
+    int y0 = iy < d.kh ? 0 : (iy - d.kh) / d.sh + 1;
+    int x0 = ix < d.kw ? 0 : (ix - d.kw) / d.sw + 1;
+    int y1 = min(iy / d.sh, d.oh - 1), x1 = min(ix / d.sw, d.ow - 1);
+    float sum = 0.0f;
+    for (int oy = y0; oy <= y1; oy++) {
+        for (int ox = x0; ox <= x1; ox++) {
+            int oi = (plane * d.oh + oy) * d.ow + ox;
+            if (indices[oi] == i) sum += g[oi];
+        }
+    }
+    dx[i] = sum;
+}
+
+static Buf pool_forward(const float* x, PoolCache& cache) {
+    auto out = empty(cache.dims.ny);
+    k_maxpool2d_forward<<<blocks(cache.dims.ny), THREADS>>>(x, out->data, cache.indices, cache.dims);
+    check(cudaGetLastError());
+    return out;
+}
+
+static Buf pool_backward(const float* grad, const PoolCache& cache) {
+    auto dx = empty(cache.dims.nx);
+    k_maxpool2d_backward<<<blocks(cache.dims.nx), THREADS>>>(grad, cache.indices, dx->data, cache.dims);
+    check(cudaGetLastError());
+    return dx;
+}
+
+EXPORT void maxpool2d_forward_cuda_resident(void* x, int n, int c, int h, int w, int kh, int kw, int sh, int sw, void** out, void** outCache) {
+    CUDA_BEGIN
+    if (!out || !outCache || out == outCache) throw std::runtime_error("invalid CUDA output slots");
+    *out = *outCache = nullptr;
+    PoolDims d(n, c, h, w, kh, kw, sh, sw);
+    float* X = ptr(x, d.nx);
+    Pool cache(new PoolCache(d));
+    auto result = pool_forward(X, *cache);
+    *out = result.release(); *outCache = cache.release();
+    CUDA_END((void)0)
+}
+
+EXPORT void* maxpool2d_backward_cuda_resident(void* grad, void* handle) {
+    CUDA_BEGIN
+    if (!handle) throw std::runtime_error("null CUDA pool cache");
+    auto& cache = *static_cast<PoolCache*>(handle);
+    return pool_backward(ptr(grad, cache.dims.ny), cache).release();
+    CUDA_END(nullptr)
+}
+
+EXPORT void camel_cuda_pool_cache_free(void* cache) { delete static_cast<PoolCache*>(cache); }
+
+EXPORT void maxpool2d_forward_cuda(const float* x, float* out, int* indices, int n, int c, int h, int w, int kh, int kw, int sh, int sw) {
+    CUDA_BEGIN
+    PoolDims d(n, c, h, w, kh, kw, sh, sw);
+    if (!x || !out || !indices) throw std::runtime_error("null maxpool input/output");
+    auto X = upload(x, d.nx);
+    PoolCache cache(d);
+    auto result = pool_forward(X->data, cache);
+    result->read(out, d.ny);
+    check(cudaMemcpy(indices, cache.indices, sizeof(int) * d.ny, cudaMemcpyDeviceToHost));
+    CUDA_END((void)0)
+}
+
+EXPORT void maxpool2d_backward_cuda(const float* grad, const int* indices, float* dx, int n, int c, int h, int w, int kh, int kw, int sh, int sw) {
+    CUDA_BEGIN
+    PoolDims d(n, c, h, w, kh, kw, sh, sw);
+    if (!grad || !indices || !dx) throw std::runtime_error("null maxpool input/output");
+    // Reject a stale/corrupt mask instead of silently dropping its gradients.
+    for (int i = 0; i < d.ny; i++) {
+        int plane = i / d.ow / d.oh;
+        long long local = static_cast<long long>(indices[i]) - plane * d.h * d.w;
+        long long y = local >= 0 ? local / d.w : -1, x = local >= 0 ? local % d.w : -1;
+        int oy = (i / d.ow) % d.oh, ox = i % d.ow;
+        if (y < oy * d.sh || y >= oy * d.sh + d.kh || x < ox * d.sw || x >= ox * d.sw + d.kw)
+            throw std::runtime_error("maxpool index outside its window");
+    }
+    auto G = upload(grad, d.ny);
+    PoolCache cache(d);
+    check(cudaMemcpy(cache.indices, indices, sizeof(int) * d.ny, cudaMemcpyHostToDevice));
+    pool_backward(G->data, cache)->read(dx, d.nx);
+    CUDA_END((void)0)
+}
+
+EXPORT void* copy_cuda_resident(void* x, int total) {
+    CUDA_BEGIN
+    return copy(ptr(x, total), total).release();
+    CUDA_END(nullptr)
+}

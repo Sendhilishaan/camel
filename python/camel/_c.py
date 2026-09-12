@@ -88,6 +88,7 @@ if SIMD_AVAILABLE:
 _GPU_TYPE_MAP = {POINTER(c_double): POINTER(c_float), c_double: c_float}
 METAL_AVAILABLE = hasattr(c, "matmul_forward_metal")
 CUDA_AVAILABLE = hasattr(c, "matmul_forward_cuda")
+CNN_CUDA_AVAILABLE = hasattr(c, "conv2d_forward_cuda_resident")
 
 _GPU_SIGNATURES = {
     "buffer_create": ([POINTER(c_float), c_int], c_void_p),
@@ -149,3 +150,48 @@ for _backend, _available in (("metal", METAL_AVAILABLE), ("cuda", CUDA_AVAILABLE
         _fn.argtypes, _fn.restype = _args, _result
         if _backend == "cuda" and _name != "buffer_free":
             _fn.errcheck = _cuda_check
+
+# CNNs are introduced backend by backend. Older/CPU-only libraries still import.
+CNN_NAIVE_AVAILABLE = hasattr(c, "conv2d_forward")
+
+
+def _naive_cnn_check(result, function, args):
+    error = c.camel_naive_get_last_error()
+    if error:
+        raise RuntimeError(f"{function.__name__}: {error.decode('utf-8', errors='replace')}")
+    return result
+
+
+if CNN_NAIVE_AVAILABLE:
+    c.camel_naive_get_last_error.argtypes = []
+    c.camel_naive_get_last_error.restype = c_char_p
+    _dp, _ip = POINTER(c_double), POINTER(c_int)
+    for _name, _args in {
+        "conv2d_forward": [_dp] * 4 + [c_int] * 11,
+        "conv2d_backward": [_dp] * 6 + [c_int] * 11,
+        "maxpool2d_forward": [_dp, _dp, _ip] + [c_int] * 8,
+        "maxpool2d_backward": [_dp, _ip, _dp] + [c_int] * 8,
+    }.items():
+        _fn = getattr(c, _name)
+        _fn.argtypes, _fn.restype, _fn.errcheck = _args, None, _naive_cnn_check
+
+
+if CNN_CUDA_AVAILABLE:
+    _fp, _ip, _hp = POINTER(c_float), POINTER(c_int), POINTER(c_void_p)
+    _conv_dims, _pool_dims = [c_int] * 11, [c_int] * 8
+    _cnn_signatures = {
+        "conv2d_forward_cuda": ([_fp] * 4 + _conv_dims, None),
+        "conv2d_backward_cuda": ([_fp] * 6 + _conv_dims, None),
+        "conv2d_forward_cuda_resident": ([c_void_p] * 3 + _conv_dims, c_void_p),
+        "conv2d_backward_cuda_resident": ([c_void_p] * 3 + _conv_dims + [_hp] * 3, None),
+        "maxpool2d_forward_cuda": ([_fp, _fp, _ip] + _pool_dims, None),
+        "maxpool2d_backward_cuda": ([_fp, _ip, _fp] + _pool_dims, None),
+        "maxpool2d_forward_cuda_resident": ([c_void_p] + _pool_dims + [_hp] * 2, None),
+        "maxpool2d_backward_cuda_resident": ([c_void_p, c_void_p], c_void_p),
+        "copy_cuda_resident": ([c_void_p, c_int], c_void_p),
+    }
+    for _name, (_args, _result) in _cnn_signatures.items():
+        _fn = getattr(c, _name)
+        _fn.argtypes, _fn.restype, _fn.errcheck = _args, _result, _cuda_check
+    c.camel_cuda_pool_cache_free.argtypes = [c_void_p]
+    c.camel_cuda_pool_cache_free.restype = None

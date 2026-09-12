@@ -1,5 +1,5 @@
 from __future__ import annotations
-from camel.ops import Vbuf, Ops
+from camel.ops import Vbuf, Ops, _pair
 from camel.array import CamelArray
 from typing import List
 
@@ -9,9 +9,9 @@ class Context:
 
 class Function:
     @classmethod
-    def apply(cls, *inputs: Tensor) -> Tensor:
+    def apply(cls, *inputs: Tensor, **kwargs) -> Tensor:
         ctx = Context()
-        out_buf = cls.forward(ctx, *[t.buf for t in inputs])
+        out_buf = cls.forward(ctx, *[t.buf for t in inputs], **kwargs)
         out = Tensor(out_buf, _prev=inputs, _op=cls.__name__)
 
         def _backward():
@@ -33,7 +33,7 @@ class Function:
 class MatMul(Function):
     @staticmethod
     def forward(ctx: Context, a: Vbuf, b: Vbuf):
-        if a.shape[1] != b.shape[0]:
+        if len(a.shape) != 2 or len(b.shape) != 2 or a.shape[1] != b.shape[0]:
             raise ValueError(f"matmul shape mismatch: {a.shape} @ {b.shape}")
         ctx.save(a, b)
         return Ops.matmul_forward(a, b)
@@ -46,8 +46,8 @@ class MatMul(Function):
 class Add(Function):
     @staticmethod
     def forward(ctx: Context, a: Vbuf, b: Vbuf):
-        if b.shape[0] != 1 or b.shape[1] != a.shape[1]:
-            raise ValueError(f"add(bias) expects b=(1, {a.shape[1]}), got {b.shape} for a={a.shape}")
+        if len(a.shape) != 2 or len(b.shape) != 2 or b.shape[0] != 1 or b.shape[1] != a.shape[1]:
+            raise ValueError(f"add(bias) expects a 2D matrix and a matching bias row, got {a.shape} and {b.shape}")
         return Ops.add_forward(a, b)
     
     @staticmethod
@@ -126,6 +126,43 @@ class SoftmaxXent(Function):
         # None since apply requires same #grads as inputs and Y is just data
         return (Ops.softmax_xent_backward(probs, Y, grad_out), None)
 
+class Conv2d(Function):
+    @staticmethod
+    def forward(ctx: Context, x: Vbuf, w: Vbuf, b: Vbuf | None = None, stride=1, padding=0):
+        stride, padding = _pair(stride, "stride"), _pair(padding, "padding", 0)
+        ctx.save(x, w)
+        ctx.stride, ctx.padding, ctx.has_bias = stride, padding, b is not None
+        return Ops.conv2d_forward(x, w, b, stride, padding)
+
+    @staticmethod
+    def backward(ctx: Context, grad_out: Vbuf):
+        x, w = ctx.saved
+        grads = Ops.conv2d_backward(x, w, grad_out, ctx.stride, ctx.padding)
+        return grads if ctx.has_bias else grads[:2]
+
+class MaxPool2d(Function):
+    @staticmethod
+    def forward(ctx: Context, x: Vbuf, kernel_size=2, stride=None):
+        out, cache = Ops.maxpool2d_forward(x, kernel_size, stride)
+        ctx.save(cache)
+        return out
+
+    @staticmethod
+    def backward(ctx: Context, grad_out: Vbuf):
+        cache, = ctx.saved
+        return (Ops.maxpool2d_backward(grad_out, cache),)
+
+class Reshape(Function):
+    @staticmethod
+    def forward(ctx: Context, x: Vbuf, shape):
+        ctx.save(x.shape)
+        return Ops.reshape(x, shape)
+
+    @staticmethod
+    def backward(ctx: Context, grad_out: Vbuf):
+        shape, = ctx.saved
+        return (Ops.reshape(grad_out, shape),)
+
 class Tensor:
     def __init__(self, buf: Vbuf, requires_grad=True, _prev=(), _op=""):
         self.buf = buf
@@ -158,6 +195,23 @@ class Tensor:
     
     def softmax_xent(self, Y: Tensor) -> Tensor:
         return SoftmaxXent.apply(self, Y)
+
+    def conv2d(self, weight: Tensor, bias: Tensor | None = None, stride=1, padding=0) -> Tensor:
+        inputs = (self, weight) if bias is None else (self, weight, bias)
+        return Conv2d.apply(*inputs, stride=stride, padding=padding)
+
+    def maxpool2d(self, kernel_size=2, stride=None) -> Tensor:
+        return MaxPool2d.apply(self, kernel_size=kernel_size, stride=stride)
+
+    def reshape(self, *shape) -> Tensor:
+        if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
+            shape = tuple(shape[0])
+        return Reshape.apply(self, shape=shape)
+
+    def flatten(self) -> Tensor:
+        if len(self.buf.shape) < 2:
+            raise ValueError("flatten expects a batch dimension and at least one feature dimension")
+        return self.reshape(self.buf.shape[0], -1)
 
     def _accum(self, delta: Vbuf) -> None:
         if not self.requires_grad or delta is None:

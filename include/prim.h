@@ -45,6 +45,19 @@ EXPORT void softmax_xent_forward(const double* Z, const double* Y, double* probs
 
 EXPORT void softmax_xent_backward(const double* probs, const double* Y, double* dZ, double grad_out, int n, int m);
 
+// Contiguous NCHW images, OIHW filters, optional (1,F) bias. Outputs are overwritten.
+// Callers allocate distinct output buffers of the computed sizes.
+EXPORT const char* camel_naive_get_last_error(void);
+EXPORT void conv2d_forward(const double* x, const double* weight, const double* bias, double* out,
+    int n, int c, int h, int w, int f, int kh, int kw, int sh, int sw, int ph, int pw);
+EXPORT void conv2d_backward(const double* x, const double* weight, const double* grad,
+    double* dx, double* dw, double* db,
+    int n, int c, int h, int w, int f, int kh, int kw, int sh, int sw, int ph, int pw);
+EXPORT void maxpool2d_forward(const double* x, double* out, int* indices,
+    int n, int c, int h, int w, int kh, int kw, int sh, int sw);
+EXPORT void maxpool2d_backward(const double* grad, const int* indices, double* dx,
+    int n, int c, int h, int w, int kh, int kw, int sh, int sw);
+
 #ifdef __cplusplus
 }
 #endif

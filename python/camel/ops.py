@@ -173,9 +173,21 @@ def _resolve_backend(name: str) -> str:
     return name
 
 
-# defaults to simd where built, naive elsewhere; GPUs are opt-in (needs a real
-# GPU device at runtime, so it isn't auto-selected even when the lib has it)
-_DEFAULT_BACKEND = os.environ.get("CAMEL_BACKEND", "simd" if SIMD_AVAILABLE else "naive")
+def _automatic_backend() -> str:
+    """Choose the fastest usable backend without overriding an explicit choice."""
+    if CUDA_AVAILABLE and bool(c.camel_cuda_device_available()):
+        return "cuda"
+    if METAL_AVAILABLE and bool(c.camel_metal_device_available()):
+        return "metal"
+    if SIMD_AVAILABLE:
+        return "simd"
+    return "naive"
+
+
+# An explicit environment setting is resolved strictly. With no setting, prefer
+# a working GPU and fall back to the best CPU implementation in this build.
+_EXPLICIT_BACKEND = os.environ.get("CAMEL_BACKEND")
+_DEFAULT_BACKEND = _EXPLICIT_BACKEND if _EXPLICIT_BACKEND is not None else _automatic_backend()
 
 
 class Ops:
